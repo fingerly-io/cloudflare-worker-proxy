@@ -1,0 +1,11 @@
+name = "neutral-worker-name"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+[vars]
+BADELE_ROUTE_PREFIX = "/neutral-random-path"
+BADELE_ALLOWED_ORIGINS = "https://www.example.com,https://example.com"
+
+# Configure a route in the dashboard or uncomment and edit:
+# routes = [{ pattern = "example.com/neutral-random-path/*", zone_name = "example.com" }]
+# Set BADELE_PROXY_KEY with: pnpm wrangler secret put BADELE_PROXY_KEY
