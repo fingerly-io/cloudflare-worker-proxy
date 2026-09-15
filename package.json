@@ -1,5 +1,5 @@
 {
-  "name": "@badele/cloudflare-worker-proxy",
+  "name": "@fingerly/cloudflare-worker-proxy",
   "version": "0.1.0",
   "private": true,
   "type": "module",

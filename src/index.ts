@@ -1,18 +1,18 @@
 export interface Env {
-  BADELE_PROXY_KEY: string
-  BADELE_ROUTE_PREFIX: string
-  BADELE_ALLOWED_ORIGINS?: string
-  BADELE_INTEGRATION_ID?: string
+  FINGERLY_PROXY_KEY: string
+  FINGERLY_ROUTE_PREFIX: string
+  FINGERLY_ALLOWED_ORIGINS?: string
+  FINGERLY_INTEGRATION_ID?: string
 }
 
 const VERSION = '0.1.0'
 const MAX_BODY_BYTES = 1_048_576
 const UPSTREAM_TIMEOUT_MS = 5_000
-const UPSTREAMS = { eu: 'https://eu.api.badele.io', us: 'https://us.api.badele.io' } as const
+const UPSTREAMS = { eu: 'https://eu.api.fingerly.io', us: 'https://us.api.fingerly.io' } as const
 type Region = keyof typeof UPSTREAMS
 
 function regionFromProxyKey(key: string): Region | null {
-  const match = /^bd_px_(eu|us)_(?:production|staging|development)_/.exec(key)
+  const match = /^fly_px_(eu|us)_(?:production|staging|development)_/.exec(key)
   return match?.[1] === 'eu' || match?.[1] === 'us' ? match[1] : null
 }
 
@@ -28,7 +28,7 @@ function routeTail(pathname: string, prefix: string): string | null {
 function allowedOrigin(request: Request, env: Env): string | null {
   const origin = request.headers.get('origin')
   if (!origin) return new URL(request.url).origin
-  const allowed = new Set((env.BADELE_ALLOWED_ORIGINS ?? '').split(',').map((value) => value.trim()).filter(Boolean))
+  const allowed = new Set((env.FINGERLY_ALLOWED_ORIGINS ?? '').split(',').map((value) => value.trim()).filter(Boolean))
   return allowed.has(origin) ? origin : null
 }
 
@@ -54,10 +54,10 @@ export default {
     if (!origin) return plain(403, 'Forbidden')
     if (request.method === 'OPTIONS') return plain(204, '', origin)
     if (request.method !== 'POST') return plain(405, 'Method Not Allowed', origin)
-    const tail = routeTail(new URL(request.url).pathname, env.BADELE_ROUTE_PREFIX)
+    const tail = routeTail(new URL(request.url).pathname, env.FINGERLY_ROUTE_PREFIX)
     if (!tail) return plain(404, 'Not Found', origin)
 
-    const region = regionFromProxyKey(env.BADELE_PROXY_KEY)
+    const region = regionFromProxyKey(env.FINGERLY_PROXY_KEY)
     if (!region) return plain(503, 'Proxy configuration is invalid', origin)
     const publicKey = request.headers.get('x-api-key')
     if (!publicKey) return plain(401, 'Unauthorized', origin)
@@ -69,15 +69,15 @@ export default {
     const headers = new Headers({
       'content-type': request.headers.get('content-type') ?? 'application/json',
       'x-api-key': publicKey,
-      'x-badele-proxy-key': env.BADELE_PROXY_KEY,
-      'x-badele-client-ip': request.headers.get('cf-connecting-ip') ?? '',
-      'x-badele-origin': origin,
-      'x-badele-user-agent': request.headers.get('user-agent') ?? '',
-      'x-badele-proxy-version': VERSION,
+      'x-fingerly-proxy-key': env.FINGERLY_PROXY_KEY,
+      'x-fingerly-client-ip': request.headers.get('cf-connecting-ip') ?? '',
+      'x-fingerly-origin': origin,
+      'x-fingerly-user-agent': request.headers.get('user-agent') ?? '',
+      'x-fingerly-proxy-version': VERSION,
     })
     const idempotency = request.headers.get('idempotency-key')
     if (idempotency) headers.set('idempotency-key', idempotency)
-    if (env.BADELE_INTEGRATION_ID) headers.set('x-badele-proxy-integration-id', env.BADELE_INTEGRATION_ID)
+    if (env.FINGERLY_INTEGRATION_ID) headers.set('x-fingerly-proxy-integration-id', env.FINGERLY_INTEGRATION_ID)
 
     let upstream: Response
     try {
@@ -91,7 +91,7 @@ export default {
     const outgoing = new Headers(upstream.headers)
     outgoing.delete('set-cookie')
     corsHeaders(origin).forEach((value, name) => outgoing.set(name, value))
-    outgoing.set('x-badele-proxy-version', VERSION)
+    outgoing.set('x-fingerly-proxy-version', VERSION)
     return new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers: outgoing })
   },
 } satisfies ExportedHandler<Env>
