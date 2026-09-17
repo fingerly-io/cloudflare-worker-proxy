@@ -38,6 +38,7 @@ function corsHeaders(origin: string | null): Headers {
     headers.set('access-control-allow-origin', origin)
     headers.set('access-control-allow-methods', 'POST, OPTIONS')
     headers.set('access-control-allow-headers', 'content-type, x-api-key, idempotency-key')
+    headers.set('access-control-expose-headers', 'x-request-id, ratelimit-limit, ratelimit-remaining, retry-after, fingerly-balance-micros')
     headers.set('access-control-max-age', '600')
     headers.set('vary', 'Origin')
   }

@@ -39,5 +39,6 @@ describe('worker boundary', () => {
     const result = await worker.fetch(request, env)
     expect(result.status).toBe(204)
     expect(result.headers.get('access-control-allow-origin')).toBe('https://shop.example')
+    expect(result.headers.get('access-control-expose-headers')).toContain('fingerly-balance-micros')
   })
 })
