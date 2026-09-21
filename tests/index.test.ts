@@ -2,15 +2,17 @@ import { describe, expect, it } from 'vitest'
 import worker, { testing, type Env } from '../src/index.js'
 
 const env: Env = {
-  FINGERLY_PROXY_KEY: 'fly_px_eu_production_proxy', FINGERLY_ROUTE_PREFIX: '/neutral',
+  FINGERLY_PROXY_KEY: 'fly_px_production_proxy', FINGERLY_ROUTE_PREFIX: '/neutral',
   FINGERLY_ALLOWED_ORIGINS: 'https://shop.example',
 }
 
 describe('routing', () => {
-  it('derives only allowlisted regional upstreams', () => {
-    expect(testing.regionFromProxyKey('fly_px_eu_production_x')).toBe('eu')
-    expect(testing.regionFromProxyKey('fly_px_us_staging_x')).toBe('us')
-    expect(testing.regionFromProxyKey('fly_px_ap_production_x')).toBeNull()
+  it('serves only a well-formed proxy key', () => {
+    expect(testing.isProxyKey('fly_px_production_x')).toBe(true)
+    expect(testing.isProxyKey('fly_px_staging_x')).toBe(true)
+    expect(testing.isProxyKey('fly_pk_production_x')).toBe(false)
+    expect(testing.isProxyKey('fly_px_sandbox_x')).toBe(false)
+    expect(testing.isProxyKey('')).toBe(false)
   })
 
   it('allows only identify and supplement tails', () => {

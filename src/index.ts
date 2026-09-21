@@ -8,12 +8,16 @@ export interface Env {
 const VERSION = '0.1.0'
 const MAX_BODY_BYTES = 1_048_576
 const UPSTREAM_TIMEOUT_MS = 5_000
-const UPSTREAMS = { eu: 'https://eu.api.fingerly.io', us: 'https://us.api.fingerly.io' } as const
-type Region = keyof typeof UPSTREAMS
+/**
+ * The one destination this Worker can reach. A constant rather than anything
+ * derived from configuration: a misconfigured Worker must not be able to send
+ * a customer's traffic somewhere else.
+ */
+const UPSTREAM = 'https://api.fingerly.io'
 
-function regionFromProxyKey(key: string): Region | null {
-  const match = /^fly_px_(eu|us)_(?:production|staging|development)_/.exec(key)
-  return match?.[1] === 'eu' || match?.[1] === 'us' ? match[1] : null
+/** Whether the configured value is shaped like a Fingerly proxy key. */
+function isProxyKey(key: string): boolean {
+  return /^fly_px_(?:production|staging|development)_[A-Za-z0-9_-]+$/.test(key)
 }
 
 function routeTail(pathname: string, prefix: string): string | null {
@@ -58,8 +62,7 @@ export default {
     const tail = routeTail(new URL(request.url).pathname, env.FINGERLY_ROUTE_PREFIX)
     if (!tail) return plain(404, 'Not Found', origin)
 
-    const region = regionFromProxyKey(env.FINGERLY_PROXY_KEY)
-    if (!region) return plain(503, 'Proxy configuration is invalid', origin)
+    if (!isProxyKey(env.FINGERLY_PROXY_KEY)) return plain(503, 'Proxy configuration is invalid', origin)
     const publicKey = request.headers.get('x-api-key')
     if (!publicKey) return plain(401, 'Unauthorized', origin)
     const declaredLength = Number(request.headers.get('content-length') ?? '0')
@@ -82,7 +85,7 @@ export default {
 
     let upstream: Response
     try {
-      upstream = await fetch(UPSTREAMS[region] + tail, {
+      upstream = await fetch(UPSTREAM + tail, {
         method: 'POST', headers, body, redirect: 'manual', signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
       })
     } catch {
@@ -97,4 +100,4 @@ export default {
   },
 } satisfies ExportedHandler<Env>
 
-export const testing = { regionFromProxyKey, routeTail }
+export const testing = { isProxyKey, routeTail }

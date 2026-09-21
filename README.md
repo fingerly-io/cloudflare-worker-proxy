@@ -18,17 +18,18 @@ requests. It is not an open proxy and cannot read stored events.
 
 ```ts
 await load({
-  apiKey: 'fly_pk_eu_production_...',
+  apiKey: 'fly_pk_production_...',
   endpoints: '/your-neutral-path',
   // Optional. Omit this to keep all traffic on the first-party route.
   fallbackToDefaultEndpoint: true,
 })
 ```
 
-The proxy credential encodes the residency region. The Worker only maps `eu`
-to `https://eu.api.fingerly.io` and `us` to `https://us.api.fingerly.io`; arbitrary
-upstreams are impossible. Fingerly's persistent data remains in that regional
-data plane. Cloudflare edge processing location is controlled by your
+The upstream is a constant in the Worker's source: `https://api.fingerly.io`,
+and nothing in the configuration can change it. A `FINGERLY_PROXY_KEY` that is
+not shaped like a proxy key makes the Worker answer `503` rather than forward
+anywhere. Arbitrary upstreams are impossible by construction, not by
+validation. Cloudflare edge processing location is controlled by your
 Cloudflare account and Data Localization configuration.
 
 The Worker strips cookies and authorization headers, overwrites all trusted
