@@ -29,6 +29,7 @@ response names Fingerly either: the Worker relays only `content-type`,
 await load({
   apiKey: 'fly_pk_production_...',
   endpoints: '/k7x2qm4a',
+  consent: 'granted', // only once the visitor has agreed, or you have another lawful basis
   // Optional. Omit this to keep all traffic on your own site.
   fallbackToDefaultEndpoint: true,
 })
