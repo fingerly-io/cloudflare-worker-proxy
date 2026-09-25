@@ -1,11 +1,15 @@
-name = "neutral-worker-name"
+name = "edge-k7x2qm4a"
 main = "src/index.ts"
 compatibility_date = "2026-09-01"
 
-[vars]
-FINGERLY_ROUTE_PREFIX = "/neutral-random-path"
-FINGERLY_ALLOWED_ORIGINS = "https://www.example.com,https://example.com"
+# The route is the path the Fingerly dashboard issued, on your site's own host.
+# Exactly that path: the Worker answers nothing else.
+routes = [{ pattern = "www.example.com/k7x2qm4a", zone_name = "example.com" }]
 
-# Configure a route in the dashboard or uncomment and edit:
-# routes = [{ pattern = "example.com/neutral-random-path/*", zone_name = "example.com" }]
-# Set FINGERLY_PROXY_KEY with: pnpm wrangler secret put FINGERLY_PROXY_KEY
+[vars]
+FINGERLY_PATH = "/k7x2qm4a"
+# Only when the route is on a different host from your pages, such as
+# edge.example.com serving www.example.com. Leave it unset otherwise.
+# FINGERLY_ALLOWED_ORIGINS = "https://www.example.com"
+
+# Set the proxy key with: pnpm wrangler secret put FINGERLY_PROXY_KEY

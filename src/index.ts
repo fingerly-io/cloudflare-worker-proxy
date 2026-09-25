@@ -1,103 +1,119 @@
 export interface Env {
+  /** The `fly_px_...` key the dashboard issued, set as a Worker secret. */
   FINGERLY_PROXY_KEY: string
-  FINGERLY_ROUTE_PREFIX: string
+  /** The path the dashboard issued, such as `/k7x2qm4a`. The browser SDK posts here. */
+  FINGERLY_PATH: string
+  /**
+   * Other origins whose pages may post here, comma-separated. Only needed when
+   * the Worker answers on a different host from the page; a route on the
+   * page's own host needs nothing.
+   */
   FINGERLY_ALLOWED_ORIGINS?: string
-  FINGERLY_INTEGRATION_ID?: string
 }
 
-const VERSION = '0.1.0'
+const VERSION = '0.2.0'
 const MAX_BODY_BYTES = 1_048_576
 const UPSTREAM_TIMEOUT_MS = 5_000
 /**
- * The one destination this Worker can reach. A constant rather than anything
- * derived from configuration: a misconfigured Worker must not be able to send
- * a customer's traffic somewhere else.
+ * The one URL this Worker can reach. A constant rather than anything derived
+ * from configuration: a misconfigured Worker must not be able to send a
+ * customer's traffic somewhere else. Both of the browser SDK's calls go here;
+ * the API tells them apart by their bodies.
  */
-const UPSTREAM = 'https://api.fingerly.io'
+const UPSTREAM = 'https://api.fingerly.io/api/v1/ingest'
+
+/**
+ * The response headers relayed to the page, and nothing else. A blocker can
+ * match a response header by name, so an allowlist is what guarantees nothing
+ * on the way back names Fingerly, whatever the API sends in future.
+ */
+const RELAYED_HEADERS = ['content-type', 'x-request-id', 'ratelimit-limit', 'ratelimit-remaining', 'retry-after']
 
 /** Whether the configured value is shaped like a Fingerly proxy key. */
 function isProxyKey(key: string): boolean {
   return /^fly_px_(?:production|staging|development)_[A-Za-z0-9_-]+$/.test(key)
 }
 
-function routeTail(pathname: string, prefix: string): string | null {
-  const base = prefix.trim().replace(/\/+$/, '')
-  if (!base.startsWith('/') || base === '' || !pathname.startsWith(base + '/api/v1/')) return null
-  const tail = pathname.slice(base.length)
-  if (tail === '/api/v1/identify') return tail
-  if (/^\/api\/v1\/events\/[A-Za-z0-9_-]{1,128}\/supplement$/.test(tail)) return tail
-  return null
+/** Whether the request is for the one configured path. */
+function isProxyPath(pathname: string, configured: string): boolean {
+  const path = configured.trim().replace(/\/+$/, '')
+  return path.startsWith('/') && path.length > 1 && pathname.replace(/\/+$/, '') === path
 }
 
-function allowedOrigin(request: Request, env: Env): string | null {
+/**
+ * The page origin, when it may use this Worker. A request from the Worker's
+ * own host always may; another origin only when it is listed.
+ */
+function allowedOrigin(request: Request, env: Env): { origin: string; cross: boolean } | null {
+  const own = new URL(request.url).origin
   const origin = request.headers.get('origin')
-  if (!origin) return new URL(request.url).origin
+  if (!origin || origin === own) return { origin: own, cross: false }
   const allowed = new Set((env.FINGERLY_ALLOWED_ORIGINS ?? '').split(',').map((value) => value.trim()).filter(Boolean))
-  return allowed.has(origin) ? origin : null
+  return allowed.has(origin) ? { origin, cross: true } : null
 }
 
-function corsHeaders(origin: string | null): Headers {
+function baseHeaders(cors: string | null): Headers {
   const headers = new Headers({ 'cache-control': 'no-store' })
-  if (origin) {
-    headers.set('access-control-allow-origin', origin)
+  if (cors) {
+    headers.set('access-control-allow-origin', cors)
     headers.set('access-control-allow-methods', 'POST, OPTIONS')
     headers.set('access-control-allow-headers', 'content-type, x-api-key, idempotency-key')
-    headers.set('access-control-expose-headers', 'x-request-id, ratelimit-limit, ratelimit-remaining, retry-after, fingerly-balance-micros')
+    headers.set('access-control-expose-headers', 'x-request-id, ratelimit-limit, ratelimit-remaining, retry-after')
     headers.set('access-control-max-age', '600')
     headers.set('vary', 'Origin')
   }
   return headers
 }
 
-function plain(status: number, message: string, origin: string | null = null): Response {
-  return new Response(status === 204 ? null : message, { status, headers: corsHeaders(origin) })
+function plain(status: number, message: string, cors: string | null = null): Response {
+  return new Response(status === 204 ? null : message, { status, headers: baseHeaders(cors) })
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const origin = allowedOrigin(request, env)
-    if (!origin) return plain(403, 'Forbidden')
-    if (request.method === 'OPTIONS') return plain(204, '', origin)
-    if (request.method !== 'POST') return plain(405, 'Method Not Allowed', origin)
-    const tail = routeTail(new URL(request.url).pathname, env.FINGERLY_ROUTE_PREFIX)
-    if (!tail) return plain(404, 'Not Found', origin)
+    if (!isProxyPath(new URL(request.url).pathname, env.FINGERLY_PATH)) return plain(404, 'Not Found')
+    const page = allowedOrigin(request, env)
+    if (!page) return plain(403, 'Forbidden')
+    const cors = page.cross ? page.origin : null
+    if (request.method === 'OPTIONS') return plain(204, '', cors)
+    if (request.method !== 'POST') return plain(405, 'Method Not Allowed', cors)
 
-    if (!isProxyKey(env.FINGERLY_PROXY_KEY)) return plain(503, 'Proxy configuration is invalid', origin)
+    if (!isProxyKey(env.FINGERLY_PROXY_KEY)) return plain(503, 'Service Unavailable', cors)
     const publicKey = request.headers.get('x-api-key')
-    if (!publicKey) return plain(401, 'Unauthorized', origin)
+    if (!publicKey) return plain(401, 'Unauthorized', cors)
     const declaredLength = Number(request.headers.get('content-length') ?? '0')
-    if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) return plain(413, 'Payload Too Large', origin)
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) return plain(413, 'Payload Too Large', cors)
     const body = await request.arrayBuffer()
-    if (body.byteLength > MAX_BODY_BYTES) return plain(413, 'Payload Too Large', origin)
+    if (body.byteLength > MAX_BODY_BYTES) return plain(413, 'Payload Too Large', cors)
 
     const headers = new Headers({
       'content-type': request.headers.get('content-type') ?? 'application/json',
       'x-api-key': publicKey,
       'x-fingerly-proxy-key': env.FINGERLY_PROXY_KEY,
       'x-fingerly-client-ip': request.headers.get('cf-connecting-ip') ?? '',
-      'x-fingerly-origin': origin,
+      'x-fingerly-origin': page.origin,
       'x-fingerly-user-agent': request.headers.get('user-agent') ?? '',
-      'x-fingerly-proxy-version': VERSION,
+      'x-fingerly-proxy-version': `cloudflare-worker/${VERSION}`,
     })
     const idempotency = request.headers.get('idempotency-key')
     if (idempotency) headers.set('idempotency-key', idempotency)
-    if (env.FINGERLY_INTEGRATION_ID) headers.set('x-fingerly-proxy-integration-id', env.FINGERLY_INTEGRATION_ID)
 
     let upstream: Response
     try {
-      upstream = await fetch(UPSTREAM + tail, {
+      upstream = await fetch(UPSTREAM, {
         method: 'POST', headers, body, redirect: 'manual', signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
       })
     } catch {
-      return plain(502, 'Bad Gateway', origin)
+      return plain(502, 'Bad Gateway', cors)
     }
 
-    const outgoing = new Headers(upstream.headers)
-    outgoing.delete('set-cookie')
-    corsHeaders(origin).forEach((value, name) => outgoing.set(name, value))
-    outgoing.set('x-fingerly-proxy-version', VERSION)
+    const outgoing = baseHeaders(cors)
+    for (const name of RELAYED_HEADERS) {
+      const value = upstream.headers.get(name)
+      if (value !== null) outgoing.set(name, value)
+    }
     return new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers: outgoing })
   },
 } satisfies ExportedHandler<Env>
 
-export const testing = { isProxyKey, routeTail }
+export const testing = { isProxyKey, isProxyPath, UPSTREAM }
