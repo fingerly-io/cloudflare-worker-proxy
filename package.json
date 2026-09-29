@@ -1,6 +1,8 @@
 {
   "name": "@fingerly/cloudflare-worker-proxy",
   "version": "0.2.0",
+  "license": "Apache-2.0",
+  "repository": {"type": "git", "url": "https://github.com/fingerly-io/cloudflare-worker-proxy.git"},
   "private": true,
   "type": "module",
   "scripts": { "deploy": "wrangler deploy", "lint": "tsc --noEmit", "test": "vitest run" },
