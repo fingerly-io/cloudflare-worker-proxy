@@ -2,6 +2,9 @@
 
 ## 0.2.0 (unreleased)
 
+- The README writes `.dev.vars` from a prompt (`read -rs`), readable only by
+  you, instead of a `printf` with the key in it, which left the key in the
+  shell history.
 - Answers exactly the issued path: no trailing slash, case-sensitive. A 405
   carries `Allow: POST`, and every refusal is plain text.
 - Forwards nothing and answers 500 when `CF-Connecting-IP` does not hold one

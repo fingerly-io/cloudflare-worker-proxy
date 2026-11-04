@@ -65,12 +65,22 @@ Data Localization configuration.
 
 ## Testing locally
 
+Copy the configuration, set `FINGERLY_PATH` in it and drop the routes line.
+Then write `.dev.vars` (gitignored), readable only by you, from a prompt. The
+prompt does not echo: paste a development proxy key and press Enter. It never
+appears on a command line, so it stays out of your shell history and the
+process list:
+
 ```sh
-cp wrangler.toml.example wrangler.toml   # set FINGERLY_PATH; drop the routes line
-printf 'FINGERLY_PROXY_KEY=fly_px_development_...\nFINGERLY_DEV_UPSTREAM=http://localhost:8080\n' > .dev.vars
-pnpm wrangler dev --local
+cp wrangler.toml.example wrangler.toml
+install -m 600 /dev/null .dev.vars
+printf 'Proxy key: ' && read -rs proxy_key && echo &&
+  printf 'FINGERLY_PROXY_KEY=%s\nFINGERLY_DEV_UPSTREAM=http://localhost:8080\n' "$proxy_key" > .dev.vars; unset proxy_key
 ```
 
-Keep the key in `.dev.vars` (gitignored), never on the command line, where it
-shows in the process list.
+Then start the Worker:
+
+```sh
+pnpm wrangler dev --local
+```
 
