@@ -189,3 +189,23 @@ describe('upstream trouble', () => {
   })
 })
 
+describe('local testing upstream', () => {
+  it('forwards to a loopback API only, and to Fingerly for anything else', () => {
+    const at = (value?: string) => testing.upstreamFor({ ...env, ...(value === undefined ? {} : { FINGERLY_DEV_UPSTREAM: value }) })
+    expect(at()).toBe(testing.UPSTREAM)
+    expect(at('http://localhost:8080')).toBe('http://localhost:8080/api/v1/ingest')
+    expect(at('http://127.0.0.1:9003/')).toBe('http://127.0.0.1:9003/api/v1/ingest')
+    expect(at('http://[::1]:9003')).toBe('http://[::1]:9003/api/v1/ingest')
+    for (const other of ['https://evil.example', 'http://localhost.evil.example', 'http://10.0.0.1', 'http://localhost:8080/elsewhere', 'file:///etc/passwd', 'nonsense']) {
+      expect(at(other), other).toBe(testing.UPSTREAM)
+    }
+  })
+
+  it('sends the request to the loopback API it names', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response('{"request_id":"r"}', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await worker.fetch(post('https://shop.example/k7x2qm4a', { 'cf-connecting-ip': '203.0.113.9' }), { ...env, FINGERLY_DEV_UPSTREAM: 'http://localhost:9003' })
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('http://localhost:9003/api/v1/ingest')
+  })
+})
+

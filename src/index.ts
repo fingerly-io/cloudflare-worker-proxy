@@ -9,6 +9,13 @@ export interface Env {
    * page's own host needs nothing.
    */
   FINGERLY_ALLOWED_ORIGINS?: string
+  /**
+   * Local testing only: an API on this machine, such as
+   * `http://localhost:8080`, to forward to instead of Fingerly's. Anything
+   * that is not a loopback origin is ignored, so a deployed Worker cannot be
+   * pointed anywhere else.
+   */
+  FINGERLY_DEV_UPSTREAM?: string
 }
 
 const VERSION = '0.2.0'
@@ -24,6 +31,7 @@ const UPSTREAM_TIMEOUT_MS = 5_000
  * the API tells them apart by their bodies.
  */
 const UPSTREAM = 'https://api.fingerly.io/api/v1/ingest'
+const INGEST_PATH = '/api/v1/ingest'
 
 /**
  * The response headers relayed to the page, and nothing else. A blocker can
@@ -46,6 +54,22 @@ function isProxyKey(key: string): boolean {
 function isProxyPath(pathname: string, configured: string): boolean {
   const path = configured.trim().replace(/\/+$/, '')
   return path.startsWith('/') && path.length > 1 && pathname === path
+}
+
+/** Where to forward: the constant, or a loopback API while testing locally. */
+function upstreamFor(env: Env): string {
+  const dev = env.FINGERLY_DEV_UPSTREAM?.trim()
+  if (!dev) return UPSTREAM
+  try {
+    const url = new URL(dev)
+    const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+    if (loopback && (url.protocol === 'http:' || url.protocol === 'https:') && url.pathname.replace(/\/+$/, '') === '') {
+      return `${url.origin}${INGEST_PATH}`
+    }
+  } catch {
+    // Not a URL; ignored like any other value that is not loopback.
+  }
+  return UPSTREAM
 }
 
 const IPV4 = /^(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/
@@ -171,7 +195,7 @@ export default {
     let upstream: Response
     let answer: Uint8Array | null
     try {
-      upstream = await fetch(UPSTREAM, { method: 'POST', headers, body, redirect: 'manual', signal })
+      upstream = await fetch(upstreamFor(env), { method: 'POST', headers, body, redirect: 'manual', signal })
       // Read whole, under the same deadline, before anything is sent back: a
       // truncated answer relayed with a 200 would be read as a success.
       answer = await readCapped(upstream.body, MAX_RESPONSE_BYTES)
@@ -196,4 +220,4 @@ export default {
   },
 } satisfies ExportedHandler<Env>
 
-export const testing = { isProxyKey, isProxyPath, isIpLiteral, UPSTREAM }
+export const testing = { isProxyKey, isProxyPath, isIpLiteral, upstreamFor, UPSTREAM }

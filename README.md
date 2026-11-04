@@ -42,16 +42,35 @@ and use the full URL in `endpoints`.
 ## What it will and will not do
 
 The upstream is a constant in the Worker's source,
-`https://api.fingerly.io/api/v1/ingest`, and nothing in the configuration can
-change it. A `FINGERLY_PROXY_KEY` that is not shaped like a proxy key makes the
-Worker answer `503` rather than forward anywhere. Arbitrary upstreams are
-impossible by construction, not by validation.
+`https://api.fingerly.io/api/v1/ingest`. The one exception is for testing on
+your own machine: `FINGERLY_DEV_UPSTREAM`, such as `http://localhost:8080`, is
+honoured only when it names a loopback origin (`localhost`, `127.0.0.1` or
+`[::1]`), so a deployed Worker cannot be pointed anywhere else. A
+`FINGERLY_PROXY_KEY` that is not shaped like a proxy key makes the Worker
+answer `503` rather than forward anywhere.
 
 The Worker strips cookies and authorization headers, sends the visitor's
-address from `CF-Connecting-IP`, refuses every other path and method, caps
-request bodies at 1 MiB, never follows upstream redirects, and never logs
-bodies or credentials. It reports itself upstream as `cloudflare-worker/0.2.0`,
+address from `CF-Connecting-IP` (and forwards nothing, answering `500`, when
+that header does not hold one IP address), answers exactly the issued path and
+`405` with `Allow: POST` for every other method, caps request bodies at 1 MiB,
+never follows upstream redirects, and never logs bodies or credentials. One
+5-second deadline covers the whole upstream exchange. The answer is read in
+full, up to 4 MiB, before anything is sent back: a timeout answers `504`, and
+an unreachable upstream, a broken answer or one over the cap answers `502`,
+each as short plain text marked `no-store`. It reports itself upstream as `cloudflare-worker/0.2.0`,
 which is how the dashboard shows the version each proxy runs.
 
 Cloudflare edge processing location is controlled by your Cloudflare account and
 Data Localization configuration.
+
+## Testing locally
+
+```sh
+cp wrangler.toml.example wrangler.toml   # set FINGERLY_PATH; drop the routes line
+printf 'FINGERLY_PROXY_KEY=fly_px_development_...\nFINGERLY_DEV_UPSTREAM=http://localhost:8080\n' > .dev.vars
+pnpm wrangler dev --local
+```
+
+Keep the key in `.dev.vars` (gitignored), never on the command line, where it
+shows in the process list.
+
