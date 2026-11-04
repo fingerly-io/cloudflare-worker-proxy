@@ -34,10 +34,15 @@ function isProxyKey(key: string): boolean {
   return /^fly_px_(?:production|staging|development)_[A-Za-z0-9_-]+$/.test(key)
 }
 
-/** Whether the request is for the one configured path. */
+/**
+ * Whether the request is for the one configured path.
+ *
+ * Exactly that path: no trailing slash, nothing under it, case-sensitive. An
+ * encoded slash stays encoded in the pathname, so it never matches either.
+ */
 function isProxyPath(pathname: string, configured: string): boolean {
   const path = configured.trim().replace(/\/+$/, '')
-  return path.startsWith('/') && path.length > 1 && pathname.replace(/\/+$/, '') === path
+  return path.startsWith('/') && path.length > 1 && pathname === path
 }
 
 /**
@@ -65,8 +70,11 @@ function baseHeaders(cors: string | null): Headers {
   return headers
 }
 
-function plain(status: number, message: string, cors: string | null = null): Response {
-  return new Response(status === 204 ? null : message, { status, headers: baseHeaders(cors) })
+function plain(status: number, message: string, cors: string | null = null, extra: Record<string, string> = {}): Response {
+  const headers = baseHeaders(cors)
+  if (status !== 204) headers.set('content-type', 'text/plain; charset=utf-8')
+  for (const [name, value] of Object.entries(extra)) headers.set(name, value)
+  return new Response(status === 204 ? null : message, { status, headers })
 }
 
 export default {
@@ -75,8 +83,8 @@ export default {
     const page = allowedOrigin(request, env)
     if (!page) return plain(403, 'Forbidden')
     const cors = page.cross ? page.origin : null
-    if (request.method === 'OPTIONS') return plain(204, '', cors)
-    if (request.method !== 'POST') return plain(405, 'Method Not Allowed', cors)
+    if (request.method === 'OPTIONS') return plain(204, '', cors, { allow: 'POST, OPTIONS' })
+    if (request.method !== 'POST') return plain(405, 'Method Not Allowed', cors, { allow: 'POST' })
 
     if (!isProxyKey(env.FINGERLY_PROXY_KEY)) return plain(503, 'Service Unavailable', cors)
     const publicKey = request.headers.get('x-api-key')

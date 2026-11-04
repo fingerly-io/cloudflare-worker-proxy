@@ -23,7 +23,11 @@ describe('routing', () => {
 
   it('answers the one configured path and nothing under or beside it', () => {
     expect(testing.isProxyPath('/k7x2qm4a', '/k7x2qm4a')).toBe(true)
-    expect(testing.isProxyPath('/k7x2qm4a/', '/k7x2qm4a/')).toBe(true)
+    expect(testing.isProxyPath('/k7x2qm4a', '/k7x2qm4a/')).toBe(true)
+    expect(testing.isProxyPath('/k7x2qm4a/', '/k7x2qm4a')).toBe(false)
+    expect(testing.isProxyPath('/k7x2qm4a//', '/k7x2qm4a')).toBe(false)
+    expect(testing.isProxyPath('/K7X2QM4A', '/k7x2qm4a')).toBe(false)
+    expect(testing.isProxyPath('/k7x2qm4a%2F', '/k7x2qm4a')).toBe(false)
     expect(testing.isProxyPath('/k7x2qm4a/api/v1/identify', '/k7x2qm4a')).toBe(false)
     expect(testing.isProxyPath('/k7x2qm4ab', '/k7x2qm4a')).toBe(false)
     expect(testing.isProxyPath('/', '/')).toBe(false)
@@ -82,6 +86,15 @@ describe('worker boundary', () => {
     expect(relayed).not.toMatch(/fingerly|set-cookie/i)
     expect(result.headers.get('x-request-id')).toBe('r')
     expect(result.headers.get('ratelimit-remaining')).toBe('9')
+  })
+
+  it('answers 405 with Allow: POST for every other method', async () => {
+    for (const method of ['GET', 'PUT', 'DELETE']) {
+      const result = await worker.fetch(new Request('https://shop.example/k7x2qm4a', { method }), env)
+      expect(result.status).toBe(405)
+      expect(result.headers.get('allow')).toBe('POST')
+      expect(result.headers.get('cache-control')).toBe('no-store')
+    }
   })
 
   it('refuses rather than forwards when the key is not a proxy key', async () => {
