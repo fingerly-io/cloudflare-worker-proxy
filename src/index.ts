@@ -13,6 +13,9 @@ export interface Env {
 
 const VERSION = '0.2.0'
 const MAX_BODY_BYTES = 1_048_576
+/** The most of an answer relayed: an answer is a few kilobytes. */
+const MAX_RESPONSE_BYTES = 4 * 1_048_576
+/** One deadline for the whole exchange: connect, send, headers and body. */
 const UPSTREAM_TIMEOUT_MS = 5_000
 /**
  * The one URL this Worker can reach. A constant rather than anything derived
@@ -58,9 +61,6 @@ function isIpLiteral(value: string): boolean {
   }
 }
 
-/** Reported once per isolate rather than per request: it is configuration. */
-let reportedMissingAddress = false
-
 /**
  * The page origin, when it may use this Worker. A request from the Worker's
  * own host always may; another origin only when it is listed.
@@ -93,6 +93,41 @@ function plain(status: number, message: string, cors: string | null = null, extr
   return new Response(status === 204 ? null : message, { status, headers })
 }
 
+/** Reported once per isolate rather than per request: it is configuration. */
+let reportedMissingAddress = false
+
+/** Reads a body to its end, or returns null once it passes `limit` bytes. */
+async function readCapped(body: ReadableStream<Uint8Array> | null, limit: number): Promise<Uint8Array | null> {
+  if (!body) return new Uint8Array(0)
+  const reader = body.getReader()
+  const chunks: Uint8Array[] = []
+  let size = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    size += value.byteLength
+    if (size > limit) {
+      await reader.cancel().catch(() => undefined)
+      return null
+    }
+    chunks.push(value)
+  }
+  const out = new Uint8Array(size)
+  let offset = 0
+  for (const chunk of chunks) {
+    out.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return out
+}
+
+/** One deadline, also ended when the visitor goes away. */
+function deadline(visitor: AbortSignal | undefined): AbortSignal {
+  const timeout = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS)
+  const any = (AbortSignal as typeof AbortSignal & { any?: (signals: AbortSignal[]) => AbortSignal }).any
+  return visitor && typeof any === 'function' ? any([timeout, visitor]) : timeout
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (!isProxyPath(new URL(request.url).pathname, env.FINGERLY_PATH)) return plain(404, 'Not Found')
@@ -105,6 +140,7 @@ export default {
     if (!isProxyKey(env.FINGERLY_PROXY_KEY)) return plain(503, 'Service Unavailable', cors)
     const publicKey = request.headers.get('x-api-key')
     if (!publicKey) return plain(401, 'Unauthorized', cors)
+
     const clientIp = request.headers.get('cf-connecting-ip')?.trim() ?? ''
     if (!isIpLiteral(clientIp)) {
       if (!reportedMissingAddress) {
@@ -116,8 +152,8 @@ export default {
 
     const declaredLength = Number(request.headers.get('content-length') ?? '0')
     if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) return plain(413, 'Payload Too Large', cors)
-    const body = await request.arrayBuffer()
-    if (body.byteLength > MAX_BODY_BYTES) return plain(413, 'Payload Too Large', cors)
+    const body = await readCapped(request.body, MAX_BODY_BYTES)
+    if (body === null) return plain(413, 'Payload Too Large', cors)
 
     const headers = new Headers({
       'content-type': request.headers.get('content-type') ?? 'application/json',
@@ -131,13 +167,23 @@ export default {
     const idempotency = request.headers.get('idempotency-key')
     if (idempotency) headers.set('idempotency-key', idempotency)
 
+    const signal = deadline(request.signal)
     let upstream: Response
+    let answer: Uint8Array | null
     try {
-      upstream = await fetch(UPSTREAM, {
-        method: 'POST', headers, body, redirect: 'manual', signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-      })
-    } catch {
-      return plain(502, 'Bad Gateway', cors)
+      upstream = await fetch(UPSTREAM, { method: 'POST', headers, body, redirect: 'manual', signal })
+      // Read whole, under the same deadline, before anything is sent back: a
+      // truncated answer relayed with a 200 would be read as a success.
+      answer = await readCapped(upstream.body, MAX_RESPONSE_BYTES)
+    } catch (error) {
+      if (request.signal?.aborted) return plain(499, '', cors)
+      const timedOut = (error as { name?: string } | null)?.name === 'TimeoutError' || signal.reason?.name === 'TimeoutError'
+      console.warn(timedOut ? 'proxy: upstream timed out' : 'proxy: upstream unreachable')
+      return timedOut ? plain(504, 'Gateway timeout', cors) : plain(502, 'Bad gateway', cors)
+    }
+    if (answer === null) {
+      console.warn('proxy: upstream answer over the size limit')
+      return plain(502, 'Bad gateway', cors)
     }
 
     const outgoing = baseHeaders(cors)
@@ -145,7 +191,8 @@ export default {
       const value = upstream.headers.get(name)
       if (value !== null) outgoing.set(name, value)
     }
-    return new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers: outgoing })
+    const bodiless = [101, 204, 205, 304].includes(upstream.status)
+    return new Response(bodiless ? null : answer, { status: upstream.status, statusText: upstream.statusText, headers: outgoing })
   },
 } satisfies ExportedHandler<Env>
 

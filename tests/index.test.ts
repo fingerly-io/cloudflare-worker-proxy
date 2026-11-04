@@ -126,3 +126,66 @@ describe('worker boundary', () => {
     expect(result.status).toBe(503)
   })
 })
+
+describe('upstream trouble', () => {
+  const visitor = { origin: 'https://shop.example', 'cf-connecting-ip': '203.0.113.9' }
+
+  it('answers 504 when the upstream does not answer in time', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new DOMException('The operation timed out.', 'TimeoutError')
+    }))
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const result = await worker.fetch(post('https://shop.example/k7x2qm4a', visitor), env)
+    expect(result.status).toBe(504)
+    expect(await result.text()).toBe('Gateway timeout')
+    expect(result.headers.get('cache-control')).toBe('no-store')
+  })
+
+  it('answers 502 when the upstream is unreachable', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new TypeError('Network connection lost.')
+    }))
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const result = await worker.fetch(post('https://shop.example/k7x2qm4a', visitor), env)
+    expect(result.status).toBe(502)
+    expect(await result.text()).toBe('Bad gateway')
+  })
+
+  it('answers 502, not a truncated 200, when the answer breaks off', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"request_id":'))
+        controller.error(new TypeError('Network connection lost.'))
+      },
+    }), { status: 200, headers: { 'content-type': 'application/json' } })))
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const result = await worker.fetch(post('https://shop.example/k7x2qm4a', visitor), env)
+    expect(result.status).toBe(502)
+  })
+
+  it('answers 502 for an answer over 4 MiB', async () => {
+    const big = new Uint8Array(4 * 1_048_576 + 1)
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(big, { status: 200 })))
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const result = await worker.fetch(post('https://shop.example/k7x2qm4a', visitor), env)
+    expect(result.status).toBe(502)
+  })
+
+  it('refuses a body over 1 MiB that declares no length', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(1_048_577))
+        controller.close()
+      },
+    })
+    const request = new Request('https://shop.example/k7x2qm4a', {
+      method: 'POST', body: stream, headers: { 'x-api-key': 'fly_pk_production_public', ...visitor }, duplex: 'half',
+    } as RequestInit)
+    const result = await worker.fetch(request, env)
+    expect(result.status).toBe(413)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
