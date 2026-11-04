@@ -35,6 +35,30 @@ describe('routing', () => {
   })
 })
 
+describe('client address', () => {
+  it('accepts one IPv4 or IPv6 literal and nothing else', () => {
+    for (const ok of ['203.0.113.9', '::1', '2001:db8::1', '::ffff:192.0.2.1']) expect(testing.isIpLiteral(ok), ok).toBe(true)
+    for (const bad of ['', 'null', 'undefined', '203.0.113.9, 10.0.0.1', '256.1.1.1', 'example.com', '[::1]', '1.2.3']) {
+      expect(testing.isIpLiteral(bad), bad).toBe(false)
+    }
+  })
+
+  it('forwards nothing and answers 500 when CF-Connecting-IP is missing or malformed', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    for (const value of [undefined, 'null', '1.2.3.4, 5.6.7.8']) {
+      const result = await worker.fetch(post('https://shop.example/k7x2qm4a', value === undefined ? {} : { 'cf-connecting-ip': value }), env)
+      expect(result.status).toBe(500)
+      expect(result.headers.get('content-type')).toContain('text/plain')
+      expect(await result.text()).toMatch(/no valid address/)
+    }
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(logged.mock.calls.length).toBeLessThanOrEqual(1)
+    logged.mockRestore()
+  })
+})
+
 describe('worker boundary', () => {
   it('refuses unapproved origins and other paths', async () => {
     expect((await worker.fetch(post('https://shop.example/k7x2qm4a', { origin: 'https://evil.example' }), env)).status).toBe(403)

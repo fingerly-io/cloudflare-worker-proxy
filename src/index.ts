@@ -45,6 +45,22 @@ function isProxyPath(pathname: string, configured: string): boolean {
   return path.startsWith('/') && path.length > 1 && pathname === path
 }
 
+const IPV4 = /^(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/
+
+/** Whether the value is one IPv4 or IPv6 literal and nothing else. */
+function isIpLiteral(value: string): boolean {
+  if (IPV4.test(value)) return true
+  if (!/^[0-9A-Fa-f:.]+$/.test(value) || !value.includes(':')) return false
+  try {
+    return new URL(`http://[${value}]/`).hostname.length > 2
+  } catch {
+    return false
+  }
+}
+
+/** Reported once per isolate rather than per request: it is configuration. */
+let reportedMissingAddress = false
+
 /**
  * The page origin, when it may use this Worker. A request from the Worker's
  * own host always may; another origin only when it is listed.
@@ -89,6 +105,15 @@ export default {
     if (!isProxyKey(env.FINGERLY_PROXY_KEY)) return plain(503, 'Service Unavailable', cors)
     const publicKey = request.headers.get('x-api-key')
     if (!publicKey) return plain(401, 'Unauthorized', cors)
+    const clientIp = request.headers.get('cf-connecting-ip')?.trim() ?? ''
+    if (!isIpLiteral(clientIp)) {
+      if (!reportedMissingAddress) {
+        reportedMissingAddress = true
+        console.error('proxy: CF-Connecting-IP held no valid client address; nothing was forwarded')
+      }
+      return plain(500, 'The client IP source returned no valid address', cors)
+    }
+
     const declaredLength = Number(request.headers.get('content-length') ?? '0')
     if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) return plain(413, 'Payload Too Large', cors)
     const body = await request.arrayBuffer()
@@ -98,7 +123,7 @@ export default {
       'content-type': request.headers.get('content-type') ?? 'application/json',
       'x-api-key': publicKey,
       'x-fingerly-proxy-key': env.FINGERLY_PROXY_KEY,
-      'x-fingerly-client-ip': request.headers.get('cf-connecting-ip') ?? '',
+      'x-fingerly-client-ip': clientIp,
       'x-fingerly-origin': page.origin,
       'x-fingerly-user-agent': request.headers.get('user-agent') ?? '',
       'x-fingerly-proxy-version': `cloudflare-worker/${VERSION}`,
@@ -124,4 +149,4 @@ export default {
   },
 } satisfies ExportedHandler<Env>
 
-export const testing = { isProxyKey, isProxyPath, UPSTREAM }
+export const testing = { isProxyKey, isProxyPath, isIpLiteral, UPSTREAM }
