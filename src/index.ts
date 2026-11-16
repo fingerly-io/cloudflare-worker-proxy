@@ -196,12 +196,6 @@ function deadline(visitor: AbortSignal | undefined): AbortSignal {
   return visitor && typeof any === 'function' ? any([timeout, visitor]) : timeout
 }
 
-interface CfMetadata {
-  tlsVersion?: unknown
-  tlsCipher?: unknown
-  httpProtocol?: unknown
-}
-
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
@@ -257,17 +251,6 @@ export default {
     for (const name of FORWARDED_CLIENT_HEADERS) {
       const value = request.headers.get(name)
       if (value) headers.set(name, value)
-    }
-
-    const cf = (request as Request & { cf?: CfMetadata }).cf
-    if (typeof cf?.tlsVersion === 'string' && cf.tlsVersion !== '') {
-      headers.set('x-fingerly-edge-tls-version', cf.tlsVersion)
-    }
-    if (typeof cf?.tlsCipher === 'string' && cf.tlsCipher !== '') {
-      headers.set('x-fingerly-edge-tls-cipher', cf.tlsCipher)
-    }
-    if (typeof cf?.httpProtocol === 'string' && cf.httpProtocol !== '') {
-      headers.set('x-fingerly-edge-http-proto', cf.httpProtocol)
     }
 
     const signal = deadline(request.signal)

@@ -23,13 +23,12 @@ describe('README', () => {
     }
   })
 
-  it('documents single-path ingest, sanitize-and-restore platform gate, and edge TLS forwarding', () => {
+  it('documents single-path ingest, sanitize-and-restore platform gate, and that no edge TLS detail is sent', () => {
     expect(README).toContain('https://api.fingerly.io/api/v1/ingest')
     expect(README).toContain('x-fingerly-sdk-platform')
     expect(README).toContain('missing_origin')
-    expect(README).toContain('x-fingerly-edge-tls-version')
-    expect(README).toContain('x-fingerly-edge-tls-cipher')
-    expect(README).toContain('x-fingerly-edge-http-proto')
+    expect(README).toContain('forwards nothing from `request.cf`')
+    expect(README).not.toContain('x-fingerly-edge-')
     expect(README).not.toMatch(/[\u2013\u2014]/)
   })
 

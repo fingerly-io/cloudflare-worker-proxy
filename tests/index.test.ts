@@ -198,7 +198,7 @@ describe('worker boundary', () => {
     expect(sameHost.headers.get('access-control-allow-origin')).toBeNull()
   })
 
-  it('forwards visitor metadata, Sec-Fetch-*, Sec-CH-UA*, Cloudflare edge TLS headers, raw body bytes, and Retry-After while stripping spoofed headers', async () => {
+  it('forwards visitor metadata, Sec-Fetch-*, Sec-CH-UA*, raw body bytes, and Retry-After while stripping spoofed headers and adding no edge TLS headers', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response('{"error":{"code":"request_in_progress"}}', {
       status: 409,
       headers: {
@@ -251,9 +251,11 @@ describe('worker boundary', () => {
     expect(sent.get('sec-ch-ua')).toBe('"Chromium";v="130"')
     expect(sent.get('sec-ch-ua-mobile')).toBe('?0')
     expect(sent.get('sec-ch-ua-platform')).toBe('"macOS"')
-    expect(sent.get('x-fingerly-edge-tls-version')).toBe('TLSv1.3')
-    expect(sent.get('x-fingerly-edge-tls-cipher')).toBe('AEAD-AES128-GCM-SHA256')
-    expect(sent.get('x-fingerly-edge-http-proto')).toBe('HTTP/3')
+    // request.cf carries TLS details, and none of them is forwarded.
+    expect(sent.get('x-fingerly-edge-tls-version')).toBeNull()
+    expect(sent.get('x-fingerly-edge-tls-cipher')).toBeNull()
+    expect(sent.get('x-fingerly-edge-http-proto')).toBeNull()
+    expect([...sent.keys()].filter((name) => name.startsWith('x-fingerly-edge-'))).toEqual([])
     expect(sent.get('cookie')).toBeNull()
     expect(sent.get('authorization')).toBeNull()
 
