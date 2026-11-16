@@ -53,8 +53,9 @@ the Worker answer `503` rather than forward anywhere.
 Incoming headers follow a sanitize-and-restore sequence: the Worker captures
 `x-fingerly-sdk-platform` only when it matches the exact lowercase native SDK
 allowlist, strips every incoming `x-fingerly-*` header alongside `Cookie` and
-`Authorization`, restores the validated `x-fingerly-sdk-platform` when matched,
-and rejects with `400` (`missing_origin`, marked `no-store`) when both `Origin`
+`Authorization`, restores the validated `x-fingerly-sdk-platform` only when it
+matched and `Origin` is absent (a request with `Origin` goes upstream with
+`x-fingerly-origin` only: one channel header, never both), and rejects with `400` (`missing_origin`, marked `no-store`) when both `Origin`
 and validated `x-fingerly-sdk-platform` are absent (never synthesizing
 `x-fingerly-origin` from the request URL or `Host`).
 

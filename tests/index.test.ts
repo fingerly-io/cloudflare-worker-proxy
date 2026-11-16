@@ -152,6 +152,28 @@ describe('sanitize-and-restore & origin gate', () => {
       expect(sent.get('idempotency-key')).toBe('idem-native-1')
     }
   })
+
+  it('sends one channel header: a valid platform beside Origin is dropped and only x-fingerly-origin goes upstream', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response('{}', {
+      status: 200, headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    for (const platform of ['ios', 'android', 'react-native-ios']) {
+      fetchMock.mockClear()
+      const result = await worker.fetch(post('https://shop.example/k7x2qm4a', {
+        origin: 'https://shop.example',
+        'cf-connecting-ip': '203.0.113.9',
+        'x-fingerly-sdk-platform': platform,
+      }), env)
+
+      expect(result.status, platform).toBe(200)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      const sent = new Headers(fetchMock.mock.calls[0]![1]?.headers)
+      expect(sent.get('x-fingerly-origin'), platform).toBe('https://shop.example')
+      expect(sent.get('x-fingerly-sdk-platform'), platform).toBeNull()
+    }
+  })
 })
 
 describe('worker boundary', () => {
