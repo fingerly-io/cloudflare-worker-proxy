@@ -259,6 +259,56 @@ describe('worker boundary', () => {
   })
 })
 
+/** A browser visitor's headers, for the allowlist and public key checks. */
+const browserVisitor = {
+  origin: 'https://shop.example', 'cf-connecting-ip': '203.0.113.9', 'user-agent': 'Mozilla/5.0',
+  'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'empty',
+}
+
+/** An upstream that answers with relayed, internal and unknown headers. */
+function stubUpstream() {
+  const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response('{"request_id":"r"}', {
+    status: 200,
+    headers: {
+      'content-type': 'application/json', 'x-request-id': 'r', 'ratelimit-limit': '100', 'ratelimit-remaining': '9',
+      'retry-after': '1', 'fingerly-balance-micros': '100', 'set-cookie': 'a=b', server: 'fingerly-api',
+      'x-new-internal': '1', 'x-powered-by': 'api-stack', via: '1.1 api-internal',
+    },
+  }))
+  vi.stubGlobal('fetch', fetchMock)
+  return fetchMock
+}
+
+describe('header allowlists', () => {
+  /** Names the contract (sdks/contract/proxy.md section 3) lets a proxy send upstream. */
+  const CONTRACT_REQUEST = /^(x-api-key|content-type|idempotency-key|user-agent|sec-fetch-(site|mode|dest)|sec-ch-ua(-mobile|-platform)?|x-fingerly-[a-z-]+)$/
+  const RELAYED_RESPONSE = /^(x-request-id|ratelimit-limit|ratelimit-remaining|retry-after|content-type|cache-control)$/
+
+  it('forwards only the contract request headers and relays only the allowlisted response headers', async () => {
+    const fetchMock = stubUpstream()
+    const result = await worker.fetch(post('https://shop.example/k7x2qm4a', {
+      ...browserVisitor,
+      referer: 'https://shop.example/reset?token=secret-token',
+      'x-custom-token': 'app-header',
+      forwarded: 'for=203.0.113.9',
+      'x-forwarded-for': '6.6.6.6',
+      'x-forwarded-host': 'forged.example',
+      'x-real-ip': '6.6.6.6',
+      'accept-language': 'tr-TR',
+      cookie: 'session=1',
+      authorization: 'Bearer secret',
+    }), env)
+    expect(result.status).toBe(200)
+    const sent = new Headers(fetchMock.mock.calls[0]![1]?.headers)
+    expect([...sent.keys()].filter((name) => !CONTRACT_REQUEST.test(name))).toEqual([])
+    expect(sent.get('x-fingerly-client-ip')).toBe('203.0.113.9')
+    expect(sent.get('sec-fetch-site')).toBe('same-origin')
+    expect(sent.get('sec-fetch-mode')).toBe('cors')
+    expect(sent.get('sec-fetch-dest')).toBe('empty')
+    expect([...result.headers.keys()].filter((name) => !RELAYED_RESPONSE.test(name))).toEqual([])
+  })
+})
+
 describe('upstream trouble', () => {
   const visitor = { origin: 'https://shop.example', 'cf-connecting-ip': '203.0.113.9' }
 
