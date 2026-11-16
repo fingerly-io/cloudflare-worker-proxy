@@ -1,9 +1,9 @@
 # Fingerly Cloudflare Worker Proxy
 
-An auditable first-party proxy for the Fingerly browser SDK. It runs in your
-Cloudflare account, on your site's own host, at one path the Fingerly dashboard
-issued, and forwards only the browser SDK's submissions. It is not an open proxy
-and cannot read stored events.
+An auditable first-party proxy for Fingerly browser and native SDKs. It runs in
+your Cloudflare account, on your site's own host, at one path the Fingerly
+dashboard issued, and forwards single-pass raw-byte ingest submissions. It is
+not an open proxy and cannot read stored events.
 
 ## Why it gets past content blockers
 
@@ -12,7 +12,7 @@ such as `fingerprint`. Through this Worker the SDK posts to a path on your own
 site that is random, unique to you, and has nothing appended to it, so there is
 no pattern shared with any other site for a filter list to match. Nothing in the
 response names Fingerly either: the Worker relays only `content-type`,
-`x-request-id` and the rate limit headers.
+`x-request-id`, the rate limit headers and `retry-after`.
 
 ## Deployment
 
@@ -42,23 +42,35 @@ and use the full URL in `endpoints`.
 ## What it will and will not do
 
 The upstream is a constant in the Worker's source,
-`https://api.fingerly.io/api/v1/ingest`. The one exception is for testing on
-your own machine: `FINGERLY_DEV_UPSTREAM`, such as `http://localhost:8080`, is
-honoured only when it names a loopback origin (`localhost`, `127.0.0.1` or
-`[::1]`), so a deployed Worker cannot be pointed anywhere else. A
-`FINGERLY_PROXY_KEY` that is not shaped like a proxy key makes the Worker
-answer `503` rather than forward anywhere.
+`https://api.fingerly.io/api/v1/ingest`. Subpaths under the issued path (such as
+`/supplement`) answer `404` marked `no-store`. The one exception for the
+upstream is testing on your own machine: `FINGERLY_DEV_UPSTREAM`, such as
+`http://localhost:8080`, is honoured only when it names a loopback origin
+(`localhost`, `127.0.0.1` or `[::1]`), so a deployed Worker cannot be pointed
+anywhere else. A `FINGERLY_PROXY_KEY` that is not shaped like a proxy key makes
+the Worker answer `503` rather than forward anywhere.
 
-The Worker strips cookies and authorization headers, sends the visitor's
-address from `CF-Connecting-IP` (and forwards nothing, answering `500`, when
-that header does not hold one IP address), answers exactly the issued path and
-`405` with `Allow: POST` for every other method, caps request bodies at 1 MiB,
-never follows upstream redirects, and never logs bodies or credentials. One
-5-second deadline covers the whole upstream exchange. The answer is read in
-full, up to 4 MiB, before anything is sent back: a timeout answers `504`, and
-an unreachable upstream, a broken answer or one over the cap answers `502`,
-each as short plain text marked `no-store`. It reports itself upstream as `cloudflare-worker/0.2.0`,
-which is how the dashboard shows the version each proxy runs.
+Incoming headers follow a sanitize-and-restore sequence: the Worker captures
+`x-fingerly-sdk-platform` only when it matches the exact lowercase native SDK
+allowlist, strips every incoming `x-fingerly-*` header alongside `Cookie` and
+`Authorization`, restores the validated `x-fingerly-sdk-platform` when matched,
+and rejects with `400` (`missing_origin`, marked `no-store`) when both `Origin`
+and validated `x-fingerly-sdk-platform` are absent (never synthesizing
+`x-fingerly-origin` from the request URL or `Host`).
+
+The Worker forwards raw request body bytes untouched (capped at 1 MiB), sends
+the visitor's address from `CF-Connecting-IP` (answering `500` when that header
+does not hold one IP address), forwards allowlisted client headers
+(`x-api-key`, `content-type`, `idempotency-key`, `user-agent`, `sec-fetch-*`
+and `sec-ch-ua*`), and forwards Cloudflare edge TLS metadata from `request.cf`
+(`x-fingerly-edge-tls-version`, `x-fingerly-edge-tls-cipher` and
+`x-fingerly-edge-http-proto`) when available. Every other HTTP method answers
+`405` with `Allow: POST`. One 5-second deadline covers the whole upstream
+exchange. The answer is read in full, up to 4 MiB, before anything is sent
+back: a timeout answers `504`, and an unreachable upstream, a broken answer or
+one over the cap answers `502`, each marked `no-store`. It reports itself
+upstream as `cloudflare-worker/0.2.0`, which is how the dashboard shows the
+version each proxy runs.
 
 Cloudflare edge processing location is controlled by your Cloudflare account and
 Data Localization configuration.
@@ -83,4 +95,3 @@ Then start the Worker:
 ```sh
 pnpm wrangler dev --local
 ```
-

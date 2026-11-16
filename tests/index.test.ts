@@ -6,8 +6,10 @@ const env: Env = {
   FINGERLY_ALLOWED_ORIGINS: 'https://www.shop.example',
 }
 
-function post(url: string, headers: Record<string, string> = {}): Request {
-  return new Request(url, { method: 'POST', headers: { 'x-api-key': 'fly_pk_production_public', ...headers }, body: '{}' })
+function post(url: string, headers: Record<string, string> = {}, body = '{}', cf?: Record<string, unknown>): Request {
+  const req = new Request(url, { method: 'POST', headers: { 'x-api-key': 'fly_pk_production_public', ...headers }, body })
+  if (cf) Object.defineProperty(req, 'cf', { value: cf, configurable: true })
+  return req
 }
 
 afterEach(() => vi.unstubAllGlobals())
@@ -21,7 +23,7 @@ describe('routing', () => {
     expect(testing.isProxyKey('')).toBe(false)
   })
 
-  it('answers the one configured path and nothing under or beside it', () => {
+  it('answers the one configured path and nothing under or beside it, retiring /supplement', () => {
     expect(testing.isProxyPath('/k7x2qm4a', '/k7x2qm4a')).toBe(true)
     expect(testing.isProxyPath('/k7x2qm4a', '/k7x2qm4a/')).toBe(true)
     expect(testing.isProxyPath('/k7x2qm4a/', '/k7x2qm4a')).toBe(false)
@@ -29,16 +31,28 @@ describe('routing', () => {
     expect(testing.isProxyPath('/K7X2QM4A', '/k7x2qm4a')).toBe(false)
     expect(testing.isProxyPath('/k7x2qm4a%2F', '/k7x2qm4a')).toBe(false)
     expect(testing.isProxyPath('/k7x2qm4a/api/v1/identify', '/k7x2qm4a')).toBe(false)
+    expect(testing.isProxyPath('/k7x2qm4a/supplement', '/k7x2qm4a')).toBe(false)
+    expect(testing.isProxyPath('/k7x2qm4a/events/evt_1/supplement', '/k7x2qm4a')).toBe(false)
     expect(testing.isProxyPath('/k7x2qm4ab', '/k7x2qm4a')).toBe(false)
     expect(testing.isProxyPath('/', '/')).toBe(false)
     expect(testing.isProxyPath('/k7x2qm4a', '')).toBe(false)
+  })
+
+  it('returns 404 with no-store on retired supplement subpaths', async () => {
+    for (const suffix of ['/supplement', '/events/evt_123/supplement', '/api/v1/ingest/supplement']) {
+      const result = await worker.fetch(post(`https://shop.example/k7x2qm4a${suffix}`, {
+        origin: 'https://shop.example', 'cf-connecting-ip': '203.0.113.9',
+      }), env)
+      expect(result.status, suffix).toBe(404)
+      expect(result.headers.get('cache-control')).toBe('no-store')
+    }
   })
 })
 
 describe('client address', () => {
   it('accepts one IPv4 or IPv6 literal and nothing else', () => {
     for (const ok of ['203.0.113.9', '::1', '2001:db8::1', '::ffff:192.0.2.1']) expect(testing.isIpLiteral(ok), ok).toBe(true)
-    for (const bad of ['', 'null', 'undefined', '203.0.113.9, 10.0.0.1', '256.1.1.1', 'example.com', '[::1]', '1.2.3']) {
+    for (const bad of ['', 'null', 'undefined', '203.0.113.9, 10.0.0.1', '256.1.1.1', 'example.com', '[::1]', '1.2.3', 'fe80::1%en0']) {
       expect(testing.isIpLiteral(bad), bad).toBe(false)
     }
   })
@@ -48,7 +62,10 @@ describe('client address', () => {
     vi.stubGlobal('fetch', fetchMock)
     const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     for (const value of [undefined, 'null', '1.2.3.4, 5.6.7.8']) {
-      const result = await worker.fetch(post('https://shop.example/k7x2qm4a', value === undefined ? {} : { 'cf-connecting-ip': value }), env)
+      const result = await worker.fetch(post('https://shop.example/k7x2qm4a', {
+        origin: 'https://shop.example',
+        ...(value === undefined ? {} : { 'cf-connecting-ip': value }),
+      }), env)
       expect(result.status).toBe(500)
       expect(result.headers.get('content-type')).toContain('text/plain')
       expect(await result.text()).toMatch(/no valid address/)
@@ -56,6 +73,84 @@ describe('client address', () => {
     expect(fetchMock).not.toHaveBeenCalled()
     expect(logged.mock.calls.length).toBeLessThanOrEqual(1)
     logged.mockRestore()
+  })
+})
+
+describe('sanitize-and-restore & origin gate', () => {
+  it('validates exact lowercase native SDK platform values only', () => {
+    const valid = [
+      'ios', 'android', 'react-native', 'react-native-ios', 'react-native-android',
+      'flutter', 'flutter-ios', 'flutter-android', 'lynx-ios', 'lynx-android',
+      'capacitor', 'kotlin-multiplatform',
+    ]
+    for (const platform of valid) {
+      expect(testing.validatedSdkPlatform(new Headers({ 'x-fingerly-sdk-platform': platform })), platform).toBe(platform)
+    }
+    for (const bad of ['', 'iOS', 'IOS', 'Android', 'EvilOS', 'web', 'ios, android', 'ios, ios', 'react_native']) {
+      expect(testing.validatedSdkPlatform(new Headers({ 'x-fingerly-sdk-platform': bad })), bad).toBe('')
+    }
+  })
+
+  it('rejects originless POST without valid x-fingerly-sdk-platform with 400 missing_origin and never synthesizes x-fingerly-origin', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const originless = await worker.fetch(post('https://shop.example/k7x2qm4a', {
+      'cf-connecting-ip': '203.0.113.9',
+      referer: 'https://shop.example/checkout',
+    }), env)
+    expect(originless.status).toBe(400)
+    expect(originless.headers.get('cache-control')).toBe('no-store')
+    expect(await originless.json()).toEqual({
+      error: { code: 'missing_origin', message: 'Origin or X-Fingerly-SDK-Platform header is required' },
+    })
+
+    // Spoofed x-fingerly-* headers and invalid x-fingerly-sdk-platform are stripped and rejected with 400 when Origin is absent.
+    for (const spoofed of ['EvilOS', 'iOS', 'IOS', 'web', 'ios, EvilOS']) {
+      const res = await worker.fetch(post('https://shop.example/k7x2qm4a', {
+        'cf-connecting-ip': '203.0.113.9',
+        'x-fingerly-sdk-platform': spoofed,
+        'x-fingerly-origin': 'https://shop.example',
+        'x-fingerly-client-ip': '1.2.3.4',
+        'x-fingerly-edge-tls-version': 'TLSv1.0',
+      }), env)
+      expect(res.status, spoofed).toBe(400)
+      expect(res.headers.get('cache-control')).toBe('no-store')
+      expect((await res.json() as { error: { code: string } }).error.code).toBe('missing_origin')
+    }
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('forwards valid native POST without Origin, restoring x-fingerly-sdk-platform and omitting x-fingerly-origin', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response('{"request_id":"r_native"}', {
+      status: 200, headers: { 'content-type': 'application/json', 'x-request-id': 'r_native' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    for (const platform of ['ios', 'android', 'react-native-ios']) {
+      fetchMock.mockClear()
+      const rawBody = '{"v":3,"signals":{"metrics":{"dpr":142.50,"scale":3.00}}}'
+      const result = await worker.fetch(post('https://shop.example/k7x2qm4a', {
+        'cf-connecting-ip': '203.0.113.9',
+        'x-fingerly-sdk-platform': platform,
+        'x-fingerly-origin': 'https://spoofed.example',
+        'x-fingerly-client-ip': '6.6.6.6',
+        'x-fingerly-edge-tls-version': 'TLSv1.0',
+        'idempotency-key': 'idem-native-1',
+        'user-agent': 'FingerlySDK/0.3.0',
+      }, rawBody), env)
+
+      expect(result.status, platform).toBe(200)
+      const [url, init] = fetchMock.mock.calls[0]!
+      expect(url).toBe('https://api.fingerly.io/api/v1/ingest')
+      expect(new TextDecoder().decode(init?.body as Uint8Array)).toBe(rawBody)
+      const sent = new Headers(init?.headers)
+      expect(sent.get('x-fingerly-sdk-platform')).toBe(platform)
+      expect(sent.get('x-fingerly-origin')).toBeNull()
+      expect(sent.get('x-fingerly-client-ip')).toBe('203.0.113.9')
+      expect(sent.get('x-fingerly-edge-tls-version')).toBeNull()
+      expect(sent.get('idempotency-key')).toBe('idem-native-1')
+    }
   })
 })
 
@@ -71,6 +166,8 @@ describe('worker boundary', () => {
     }), env)
     expect(preflight.status).toBe(204)
     expect(preflight.headers.get('access-control-allow-origin')).toBe('https://www.shop.example')
+    expect(preflight.headers.get('access-control-allow-headers')).toContain('x-fingerly-sdk-platform')
+    expect(preflight.headers.get('access-control-expose-headers')).toContain('retry-after')
     expect(preflight.headers.get('access-control-expose-headers')).not.toContain('fingerly')
 
     const sameHost = await worker.fetch(new Request('https://shop.example/k7x2qm4a', {
@@ -79,37 +176,72 @@ describe('worker boundary', () => {
     expect(sameHost.headers.get('access-control-allow-origin')).toBeNull()
   })
 
-  it('forwards to the one upstream with the visitor metadata and relays nothing that names us', async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response('{"request_id":"r"}', {
-      status: 200,
+  it('forwards visitor metadata, Sec-Fetch-*, Sec-CH-UA*, Cloudflare edge TLS headers, raw body bytes, and Retry-After while stripping spoofed headers', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response('{"error":{"code":"request_in_progress"}}', {
+      status: 409,
       headers: {
-        'content-type': 'application/json', 'x-request-id': 'r', 'ratelimit-remaining': '9',
-        'fingerly-balance-micros': '100', 'x-fingerly-proxy-version': 'api', 'set-cookie': 'a=b', server: 'fingerly-api',
+        'content-type': 'application/json', 'x-request-id': 'r', 'ratelimit-limit': '100', 'ratelimit-remaining': '9',
+        'retry-after': '1', 'fingerly-balance-micros': '100', 'fingerly-ratelimit-scope': 'org',
+        'x-fingerly-proxy-version': 'api', 'set-cookie': 'a=b', server: 'fingerly-api',
       },
     }))
     vi.stubGlobal('fetch', fetchMock)
 
+    const rawBody = '{ "v": 3, "signals": { "price": 142.50, "nested": [1.00, 2.50] } }'
     const result = await worker.fetch(post('https://shop.example/k7x2qm4a', {
-      origin: 'https://shop.example', 'cf-connecting-ip': '203.0.113.9', 'user-agent': 'Mozilla/5.0',
-      'idempotency-key': 'op-1', cookie: 'session=1', authorization: 'Bearer x',
+      origin: 'https://shop.example',
+      'cf-connecting-ip': '203.0.113.9',
+      'user-agent': 'Mozilla/5.0',
+      'idempotency-key': 'op-1',
+      'sec-fetch-site': 'same-origin',
+      'sec-fetch-mode': 'cors',
+      'sec-fetch-dest': 'empty',
+      'sec-ch-ua': '"Chromium";v="130"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"macOS"',
+      cookie: 'session=1',
+      authorization: 'Bearer x',
+      'x-fingerly-origin': 'https://forged.example',
+      'x-fingerly-client-ip': '6.6.6.6',
+      'x-fingerly-edge-tls-version': 'TLSv1.0',
+      'x-fingerly-sdk-platform': 'EvilOS',
+    }, rawBody, {
+      tlsVersion: 'TLSv1.3',
+      tlsCipher: 'AEAD-AES128-GCM-SHA256',
+      httpProtocol: 'HTTP/3',
     }), env)
 
-    expect(result.status).toBe(200)
+    expect(result.status).toBe(409)
     const [url, init] = fetchMock.mock.calls[0]!
     expect(url).toBe('https://api.fingerly.io/api/v1/ingest')
+    expect(new TextDecoder().decode(init?.body as Uint8Array)).toBe(rawBody)
     const sent = new Headers(init?.headers)
     expect(sent.get('x-fingerly-proxy-key')).toBe('fly_px_production_proxy')
     expect(sent.get('x-fingerly-client-ip')).toBe('203.0.113.9')
     expect(sent.get('x-fingerly-origin')).toBe('https://shop.example')
+    expect(sent.get('x-fingerly-host')).toBe('shop.example')
     expect(sent.get('x-fingerly-proxy-version')).toBe('cloudflare-worker/0.2.0')
+    expect(sent.get('x-fingerly-sdk-platform')).toBeNull()
     expect(sent.get('idempotency-key')).toBe('op-1')
+    expect(sent.get('sec-fetch-site')).toBe('same-origin')
+    expect(sent.get('sec-fetch-mode')).toBe('cors')
+    expect(sent.get('sec-fetch-dest')).toBe('empty')
+    expect(sent.get('sec-ch-ua')).toBe('"Chromium";v="130"')
+    expect(sent.get('sec-ch-ua-mobile')).toBe('?0')
+    expect(sent.get('sec-ch-ua-platform')).toBe('"macOS"')
+    expect(sent.get('x-fingerly-edge-tls-version')).toBe('TLSv1.3')
+    expect(sent.get('x-fingerly-edge-tls-cipher')).toBe('AEAD-AES128-GCM-SHA256')
+    expect(sent.get('x-fingerly-edge-http-proto')).toBe('HTTP/3')
     expect(sent.get('cookie')).toBeNull()
     expect(sent.get('authorization')).toBeNull()
 
     const relayed = [...result.headers].map(([name, value]) => `${name}: ${value}`).join('\n')
     expect(relayed).not.toMatch(/fingerly|set-cookie/i)
+    expect(result.headers.get('cache-control')).toBe('no-store')
     expect(result.headers.get('x-request-id')).toBe('r')
+    expect(result.headers.get('ratelimit-limit')).toBe('100')
     expect(result.headers.get('ratelimit-remaining')).toBe('9')
+    expect(result.headers.get('retry-after')).toBe('1')
   })
 
   it('answers 405 with Allow: POST for every other method', async () => {
@@ -204,8 +336,9 @@ describe('local testing upstream', () => {
   it('sends the request to the loopback API it names', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response('{"request_id":"r"}', { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
-    await worker.fetch(post('https://shop.example/k7x2qm4a', { 'cf-connecting-ip': '203.0.113.9' }), { ...env, FINGERLY_DEV_UPSTREAM: 'http://localhost:9003' })
+    await worker.fetch(post('https://shop.example/k7x2qm4a', {
+      origin: 'https://shop.example', 'cf-connecting-ip': '203.0.113.9',
+    }), { ...env, FINGERLY_DEV_UPSTREAM: 'http://localhost:9003' })
     expect(fetchMock.mock.calls[0]?.[0]).toBe('http://localhost:9003/api/v1/ingest')
   })
 })
-

@@ -1,7 +1,7 @@
 export interface Env {
   /** The `fly_px_...` key the dashboard issued, set as a Worker secret. */
   FINGERLY_PROXY_KEY: string
-  /** The path the dashboard issued, such as `/k7x2qm4a`. The browser SDK posts here. */
+  /** The path the dashboard issued, such as `/k7x2qm4a`. SDKs post here. */
   FINGERLY_PATH: string
   /**
    * Other origins whose pages may post here, comma-separated. Only needed when
@@ -27,14 +27,29 @@ const UPSTREAM_TIMEOUT_MS = 5_000
 /**
  * The one URL this Worker can reach. A constant rather than anything derived
  * from configuration: a misconfigured Worker must not be able to send a
- * customer's traffic somewhere else. Both of the browser SDK's calls go here;
- * the API tells them apart by their bodies.
+ * customer's traffic somewhere else. Single-pass browser and native SDK
+ * submissions post here as raw bytes.
  */
 const UPSTREAM = 'https://api.fingerly.io/api/v1/ingest'
 const INGEST_PATH = '/api/v1/ingest'
 
+/** Exact lowercase platform names accepted on the native SDK channel. */
+const SDK_PLATFORM_RE = /^(ios|android|react-native|react-native-ios|react-native-android|flutter|flutter-ios|flutter-android|lynx-ios|lynx-android|capacitor|kotlin-multiplatform)$/
+
+/** Allowlisted client headers forwarded verbatim when present. */
+const FORWARDED_CLIENT_HEADERS = [
+  'idempotency-key',
+  'user-agent',
+  'sec-fetch-site',
+  'sec-fetch-mode',
+  'sec-fetch-dest',
+  'sec-ch-ua',
+  'sec-ch-ua-mobile',
+  'sec-ch-ua-platform',
+]
+
 /**
- * The response headers relayed to the page, and nothing else. A blocker can
+ * The response headers relayed to the caller, and nothing else. A blocker can
  * match a response header by name, so an allowlist is what guarantees nothing
  * on the way back names Fingerly, whatever the API sends in future.
  */
@@ -54,6 +69,12 @@ function isProxyKey(key: string): boolean {
 function isProxyPath(pathname: string, configured: string): boolean {
   const path = configured.trim().replace(/\/+$/, '')
   return path.startsWith('/') && path.length > 1 && pathname === path
+}
+
+/** Captures incoming x-fingerly-sdk-platform only when it matches the exact lowercase allowlist. */
+function validatedSdkPlatform(headers: Headers): string {
+  const raw = headers.get('x-fingerly-sdk-platform') ?? ''
+  return SDK_PLATFORM_RE.test(raw) ? raw : ''
 }
 
 /** Where to forward: the constant, or a loopback API while testing locally. */
@@ -86,13 +107,15 @@ function isIpLiteral(value: string): boolean {
 }
 
 /**
- * The page origin, when it may use this Worker. A request from the Worker's
- * own host always may; another origin only when it is listed.
+ * Checks incoming Origin when present. Never synthesizes an origin from the
+ * Worker's own URL: requests without Origin must carry a validated
+ * x-fingerly-sdk-platform header or are rejected with 400 missing_origin.
  */
 function allowedOrigin(request: Request, env: Env): { origin: string; cross: boolean } | null {
   const own = new URL(request.url).origin
-  const origin = request.headers.get('origin')
-  if (!origin || origin === own) return { origin: own, cross: false }
+  const origin = request.headers.get('origin') ?? ''
+  if (!origin) return { origin: '', cross: false }
+  if (origin === own) return { origin, cross: false }
   const allowed = new Set((env.FINGERLY_ALLOWED_ORIGINS ?? '').split(',').map((value) => value.trim()).filter(Boolean))
   return allowed.has(origin) ? { origin, cross: true } : null
 }
@@ -102,7 +125,7 @@ function baseHeaders(cors: string | null): Headers {
   if (cors) {
     headers.set('access-control-allow-origin', cors)
     headers.set('access-control-allow-methods', 'POST, OPTIONS')
-    headers.set('access-control-allow-headers', 'content-type, x-api-key, idempotency-key')
+    headers.set('access-control-allow-headers', 'content-type, x-api-key, idempotency-key, x-fingerly-sdk-platform')
     headers.set('access-control-expose-headers', 'x-request-id, ratelimit-limit, ratelimit-remaining, retry-after')
     headers.set('access-control-max-age', '600')
     headers.set('vary', 'Origin')
@@ -115,6 +138,12 @@ function plain(status: number, message: string, cors: string | null = null, extr
   if (status !== 204) headers.set('content-type', 'text/plain; charset=utf-8')
   for (const [name, value] of Object.entries(extra)) headers.set(name, value)
   return new Response(status === 204 ? null : message, { status, headers })
+}
+
+function jsonError(status: number, code: string, message: string, cors: string | null = null): Response {
+  const headers = baseHeaders(cors)
+  headers.set('content-type', 'application/json')
+  return new Response(JSON.stringify({ error: { code, message } }), { status, headers })
 }
 
 /** Reported once per isolate rather than per request: it is configuration. */
@@ -152,9 +181,16 @@ function deadline(visitor: AbortSignal | undefined): AbortSignal {
   return visitor && typeof any === 'function' ? any([timeout, visitor]) : timeout
 }
 
+interface CfMetadata {
+  tlsVersion?: unknown
+  tlsCipher?: unknown
+  httpProtocol?: unknown
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    if (!isProxyPath(new URL(request.url).pathname, env.FINGERLY_PATH)) return plain(404, 'Not Found')
+    const url = new URL(request.url)
+    if (!isProxyPath(url.pathname, env.FINGERLY_PATH)) return plain(404, 'Not Found')
     const page = allowedOrigin(request, env)
     if (!page) return plain(403, 'Forbidden')
     const cors = page.cross ? page.origin : null
@@ -162,6 +198,16 @@ export default {
     if (request.method !== 'POST') return plain(405, 'Method Not Allowed', cors, { allow: 'POST' })
 
     if (!isProxyKey(env.FINGERLY_PROXY_KEY)) return plain(503, 'Service Unavailable', cors)
+
+    // 1. Capture validated x-fingerly-sdk-platform.
+    const sdkPlatform = validatedSdkPlatform(request.headers)
+    // 2-4. Strip all incoming x-fingerly-* (and Cookie/Authorization) by building
+    // outgoing headers from scratch below, restore validated x-fingerly-sdk-platform,
+    // and reject with 400 missing_origin iff both Origin and sdkPlatform are empty.
+    if (!page.origin && !sdkPlatform) {
+      return jsonError(400, 'missing_origin', 'Origin or X-Fingerly-SDK-Platform header is required', cors)
+    }
+
     const publicKey = request.headers.get('x-api-key')
     if (!publicKey) return plain(401, 'Unauthorized', cors)
 
@@ -184,12 +230,28 @@ export default {
       'x-api-key': publicKey,
       'x-fingerly-proxy-key': env.FINGERLY_PROXY_KEY,
       'x-fingerly-client-ip': clientIp,
-      'x-fingerly-origin': page.origin,
       'x-fingerly-user-agent': request.headers.get('user-agent') ?? '',
       'x-fingerly-proxy-version': `cloudflare-worker/${VERSION}`,
     })
-    const idempotency = request.headers.get('idempotency-key')
-    if (idempotency) headers.set('idempotency-key', idempotency)
+    if (page.origin) headers.set('x-fingerly-origin', page.origin)
+    if (sdkPlatform) headers.set('x-fingerly-sdk-platform', sdkPlatform)
+    const host = request.headers.get('host') || url.host
+    if (host) headers.set('x-fingerly-host', host)
+    for (const name of FORWARDED_CLIENT_HEADERS) {
+      const value = request.headers.get(name)
+      if (value) headers.set(name, value)
+    }
+
+    const cf = (request as Request & { cf?: CfMetadata }).cf
+    if (typeof cf?.tlsVersion === 'string' && cf.tlsVersion !== '') {
+      headers.set('x-fingerly-edge-tls-version', cf.tlsVersion)
+    }
+    if (typeof cf?.tlsCipher === 'string' && cf.tlsCipher !== '') {
+      headers.set('x-fingerly-edge-tls-cipher', cf.tlsCipher)
+    }
+    if (typeof cf?.httpProtocol === 'string' && cf.httpProtocol !== '') {
+      headers.set('x-fingerly-edge-http-proto', cf.httpProtocol)
+    }
 
     const signal = deadline(request.signal)
     let upstream: Response
@@ -220,4 +282,4 @@ export default {
   },
 } satisfies ExportedHandler<Env>
 
-export const testing = { isProxyKey, isProxyPath, isIpLiteral, upstreamFor, UPSTREAM }
+export const testing = { isProxyKey, isProxyPath, isIpLiteral, validatedSdkPlatform, upstreamFor, UPSTREAM }
