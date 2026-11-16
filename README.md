@@ -42,8 +42,8 @@ and use the full URL in `endpoints`.
 ## What it will and will not do
 
 The upstream is a constant in the Worker's source,
-`https://api.fingerly.io/api/v1/ingest`. Subpaths under the issued path (such as
-`/supplement`) answer `404` marked `no-store`. The one exception for the
+`https://api.fingerly.io/api/v1/ingest`. Any subpath or trailing slash under the
+issued path answers `404` marked `no-store`. The one exception for the
 upstream is testing on your own machine: `FINGERLY_DEV_UPSTREAM`, such as
 `http://localhost:8080`, is honoured only when it names a loopback origin
 (`localhost`, `127.0.0.1` or `[::1]`), so a deployed Worker cannot be pointed
@@ -69,7 +69,7 @@ and `sec-ch-ua*`), and forwards Cloudflare edge TLS metadata from `request.cf`
 exchange. The answer is read in full, up to 4 MiB, before anything is sent
 back: a timeout answers `504`, and an unreachable upstream, a broken answer or
 one over the cap answers `502`, each marked `no-store`. It reports itself
-upstream as `cloudflare-worker/0.2.0`, which is how the dashboard shows the
+upstream as `cloudflare-worker/0.3.0`, which is how the dashboard shows the
 version each proxy runs.
 
 Cloudflare edge processing location is controlled by your Cloudflare account and
