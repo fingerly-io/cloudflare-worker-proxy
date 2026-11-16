@@ -72,7 +72,9 @@ other HTTP method answers
 `405` with `Allow: POST`. One 5-second deadline covers the whole upstream
 exchange. The answer is read in full, up to 4 MiB, before anything is sent
 back: a timeout answers `504`, and an unreachable upstream, a broken answer or
-one over the cap answers `502`, each marked `no-store`. It reports itself
+one over the cap answers `502`, each marked `no-store`. Redirects are never
+followed: an upstream `3xx`, or any status outside `200` to `599`, answers
+`502` marked `no-store`, and its `Location` is never relayed. It reports itself
 upstream as `cloudflare-worker/0.3.0`, which is how the dashboard shows the
 version each proxy runs.
 

@@ -13,6 +13,8 @@
   deadline, before relaying it. A timeout answers 504; an unreachable
   upstream, a broken answer or one over the cap answers 502. A visitor who
   disconnects cancels the upstream call.
+- Answers an upstream redirect, or any status outside 200 to 599, with 502
+  marked `no-store`, like the server SDK proxies. `Location` never crosses.
 - Reads request bodies with the 1 MiB cap as they arrive.
 - `FINGERLY_DEV_UPSTREAM` points the Worker at a loopback API for local
   testing; any other value is ignored.

@@ -394,6 +394,47 @@ describe('upstream trouble', () => {
     expect(result.status).toBe(502)
   })
 
+  it.each([301, 302, 303, 304, 307, 308, 399])('answers %i from upstream with 502 and no Location', async (status) => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, {
+      status,
+      headers: { location: 'https://elsewhere.example/steal', 'x-request-id': 'r_redirect' },
+    })))
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const result = await worker.fetch(post('https://shop.example/k7x2qm4a', visitor), env)
+    expect(result.status).toBe(502)
+    expect(result.headers.get('cache-control')).toBe('no-store')
+    expect(result.headers.get('location')).toBeNull()
+    expect(result.headers.get('x-request-id')).toBeNull()
+    expect(await result.text()).toBe('Bad gateway')
+  })
+
+  it.each([0, 101, 199, 600, 999])('answers status %i from upstream with 502', async (status) => {
+    // Runtimes refuse to build a Response with these statuses, so the answer is faked.
+    const fake = { status, statusText: '', redirected: false, headers: new Headers(), body: null } as unknown as Response
+    vi.stubGlobal('fetch', vi.fn(async () => fake))
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const result = await worker.fetch(post('https://shop.example/k7x2qm4a', visitor), env)
+    expect(result.status).toBe(502)
+    expect(result.headers.get('cache-control')).toBe('no-store')
+  })
+
+  it('answers an opaque redirect with 502', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.error()))
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const result = await worker.fetch(post('https://shop.example/k7x2qm4a', visitor), env)
+    expect(result.status).toBe(502)
+  })
+
+  it.each([200, 204, 400, 409, 429, 500, 503, 599])('relays status %i from upstream', async (status) => {
+    const empty = status === 204
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(empty ? null : '{}', {
+      status, headers: { location: 'https://elsewhere.example/' },
+    })))
+    const result = await worker.fetch(post('https://shop.example/k7x2qm4a', visitor), env)
+    expect(result.status).toBe(status)
+    expect(result.headers.get('location')).toBeNull()
+  })
+
   it('answers 502 for an answer over 4 MiB', async () => {
     const big = new Uint8Array(4 * 1_048_576 + 1)
     vi.stubGlobal('fetch', vi.fn(async () => new Response(big, { status: 200 })))
