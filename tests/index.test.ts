@@ -220,7 +220,7 @@ describe('worker boundary', () => {
     expect(sent.get('x-fingerly-client-ip')).toBe('203.0.113.9')
     expect(sent.get('x-fingerly-origin')).toBe('https://shop.example')
     expect(sent.get('x-fingerly-host')).toBe('shop.example')
-    expect(sent.get('x-fingerly-proxy-version')).toBe('cloudflare-worker/0.2.0')
+    expect(sent.get('x-fingerly-proxy-version')).toBe('cloudflare-worker/0.3.0')
     expect(sent.get('x-fingerly-sdk-platform')).toBeNull()
     expect(sent.get('idempotency-key')).toBe('op-1')
     expect(sent.get('sec-fetch-site')).toBe('same-origin')

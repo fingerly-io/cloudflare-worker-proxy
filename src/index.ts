@@ -18,7 +18,7 @@ export interface Env {
   FINGERLY_DEV_UPSTREAM?: string
 }
 
-const VERSION = '0.2.0'
+const VERSION = '0.3.0'
 const MAX_BODY_BYTES = 1_048_576
 /** The most of an answer relayed: an answer is a few kilobytes. */
 const MAX_RESPONSE_BYTES = 4 * 1_048_576
