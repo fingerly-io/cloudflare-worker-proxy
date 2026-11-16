@@ -23,12 +23,13 @@ describe('README', () => {
     }
   })
 
-  it('documents single-path ingest, sanitize-and-restore platform gate, and that no edge TLS detail is sent', () => {
+  it('documents single-path ingest, sanitize-and-restore platform gate, and that only the edge JA4 is sent from request.cf', () => {
     expect(README).toContain('https://api.fingerly.io/api/v1/ingest')
     expect(README).toContain('x-fingerly-sdk-platform')
     expect(README).toContain('missing_origin')
-    expect(README).toContain('forwards nothing from `request.cf`')
-    expect(README).not.toContain('x-fingerly-edge-')
+    expect(README).toContain('`request.cf.botManagement.ja4`')
+    expect(README).toContain('Enterprise plans with Bot Management')
+    expect(README.match(/x-fingerly-edge-[a-z0-9-]+/g)?.every((name) => name === 'x-fingerly-edge-ja4')).toBe(true)
     expect(README).not.toMatch(/[\u2013\u2014]/)
   })
 

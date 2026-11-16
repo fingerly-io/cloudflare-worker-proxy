@@ -87,6 +87,23 @@ function validatedSdkPlatform(headers: Headers): string {
   return SDK_PLATFORM_RE.test(raw) ? raw : ''
 }
 
+/**
+ * JA4 shape: section a (protocol, TLS version, SNI, cipher and extension
+ * counts, ALPN), then two 12-character hex hashes.
+ */
+const JA4_RE = /^[tqd][0-9a-z]{2}[di][0-9]{4}[0-9a-z]{2}_[0-9a-f]{12}_[0-9a-f]{12}$/
+
+/**
+ * The JA4 fingerprint Cloudflare computed for the visitor's TLS handshake, in
+ * `request.cf.botManagement.ja4`. Set only on plans with Bot Management; any
+ * value that is absent or not shaped like JA4 yields ''.
+ */
+function edgeJa4(request: Request): string {
+  const cf = (request as Request & { cf?: { botManagement?: { ja4?: unknown } | null } }).cf
+  const value = cf?.botManagement?.ja4
+  return typeof value === 'string' && JA4_RE.test(value) ? value : ''
+}
+
 /** Where to forward: the constant, or a loopback API while testing locally. */
 function upstreamFor(env: Env): string {
   const dev = env.FINGERLY_DEV_UPSTREAM?.trim()
@@ -248,6 +265,8 @@ export default {
     else if (sdkPlatform) headers.set('x-fingerly-sdk-platform', sdkPlatform)
     const host = request.headers.get('host') || url.host
     if (host) headers.set('x-fingerly-host', host)
+    const ja4 = edgeJa4(request)
+    if (ja4) headers.set('x-fingerly-edge-ja4', ja4)
     for (const name of FORWARDED_CLIENT_HEADERS) {
       const value = request.headers.get(name)
       if (value) headers.set(name, value)

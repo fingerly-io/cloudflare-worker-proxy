@@ -333,6 +333,41 @@ describe('header allowlists', () => {
   })
 })
 
+describe('edge JA4', () => {
+  const JA4 = 't13d1516h2_8daaf6152771_b186095e22b6'
+  async function sentFor(headers: Record<string, string>, cf?: Record<string, unknown>): Promise<Headers> {
+    const fetchMock = stubUpstream()
+    const result = await worker.fetch(post('https://shop.example/k7x2qm4a', { ...browserVisitor, ...headers }, '{}', cf), env)
+    expect(result.status).toBe(200)
+    return new Headers(fetchMock.mock.calls[0]![1]?.headers)
+  }
+
+  it('forwards the JA4 Cloudflare computed when Bot Management provides it', async () => {
+    const sent = await sentFor({}, { botManagement: { score: 90, ja4: JA4 } })
+    expect(sent.get('x-fingerly-edge-ja4')).toBe(JA4)
+  })
+
+  it('sends no JA4 header when Cloudflare provides none', async () => {
+    for (const cf of [undefined, {}, { botManagement: null }, { botManagement: { score: 90 } }]) {
+      const sent = await sentFor({}, cf)
+      expect(sent.get('x-fingerly-edge-ja4')).toBeNull()
+    }
+  })
+
+  it('strips a client-sent copy, with or without an edge value', async () => {
+    const forged = 't13d0000h2_000000000000_000000000000'
+    expect((await sentFor({ 'x-fingerly-edge-ja4': forged })).get('x-fingerly-edge-ja4')).toBeNull()
+    expect((await sentFor({ 'x-fingerly-edge-ja4': forged }, { botManagement: { ja4: JA4 } })).get('x-fingerly-edge-ja4')).toBe(JA4)
+  })
+
+  it('does not forward a malformed edge value', async () => {
+    for (const ja4 of ['', 'garbage', `${JA4}\r\nx-evil: 1`, JA4.toUpperCase(), `${JA4}_extra`, 42, { a: 1 }]) {
+      const sent = await sentFor({}, { botManagement: { ja4 } })
+      expect(sent.get('x-fingerly-edge-ja4'), String(ja4)).toBeNull()
+    }
+  })
+})
+
 describe('local public key check', () => {
   it('answers 401 before any upstream call for an X-Api-Key that is not a public key of the proxy key environment', async () => {
     for (const key of ['fly_pk_development_x', 'fly_pk_staging_x', 'not-a-key', 'fly_sk_production_x', 'fly_pk_production_', 'fly_px_production_x', undefined]) {
