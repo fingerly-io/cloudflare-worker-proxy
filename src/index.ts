@@ -61,6 +61,16 @@ function isProxyKey(key: string): boolean {
 }
 
 /**
+ * Whether the caller's X-Api-Key is a public key of the proxy key's
+ * environment. Anything else, a secret `fly_sk_` key included, is answered 401
+ * here rather than sent upstream.
+ */
+function isPublicKeyFor(proxyKey: string, publicKey: string | null): publicKey is string {
+  const environment = /^fly_px_(production|staging|development)_/.exec(proxyKey)?.[1]
+  return Boolean(environment) && new RegExp(`^fly_pk_${environment}_[A-Za-z0-9_-]+$`).test(publicKey ?? '')
+}
+
+/**
  * Whether the request is for the one configured path.
  *
  * Exactly that path: no trailing slash, nothing under it, case-sensitive. An
@@ -209,7 +219,7 @@ export default {
     }
 
     const publicKey = request.headers.get('x-api-key')
-    if (!publicKey) return plain(401, 'Unauthorized', cors)
+    if (!isPublicKeyFor(env.FINGERLY_PROXY_KEY, publicKey)) return plain(401, 'Unauthorized', cors)
 
     const clientIp = request.headers.get('cf-connecting-ip')?.trim() ?? ''
     if (!isIpLiteral(clientIp)) {
@@ -282,4 +292,4 @@ export default {
   },
 } satisfies ExportedHandler<Env>
 
-export const testing = { isProxyKey, isProxyPath, isIpLiteral, validatedSdkPlatform, upstreamFor, UPSTREAM }
+export const testing = { isProxyKey, isPublicKeyFor, isProxyPath, isIpLiteral, validatedSdkPlatform, upstreamFor, UPSTREAM }

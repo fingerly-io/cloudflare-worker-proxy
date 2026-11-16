@@ -309,6 +309,33 @@ describe('header allowlists', () => {
   })
 })
 
+describe('local public key check', () => {
+  it('answers 401 before any upstream call for an X-Api-Key that is not a public key of the proxy key environment', async () => {
+    for (const key of ['fly_pk_development_x', 'fly_pk_staging_x', 'not-a-key', 'fly_sk_production_x', 'fly_pk_production_', 'fly_px_production_x', undefined]) {
+      const fetchMock = stubUpstream()
+      const headers: Record<string, string> = { ...browserVisitor }
+      const request = new Request('https://shop.example/k7x2qm4a', { method: 'POST', headers: key === undefined ? headers : { ...headers, 'x-api-key': key }, body: '{}' })
+      const result = await worker.fetch(request, env)
+      expect(result.status, String(key)).toBe(401)
+      expect(result.headers.get('cache-control'), String(key)).toBe('no-store')
+      expect(fetchMock, String(key)).not.toHaveBeenCalled()
+    }
+    // The environment comes from the proxy key itself.
+    const fetchMock = stubUpstream()
+    const staging = await worker.fetch(post('https://shop.example/k7x2qm4a', { ...browserVisitor, 'x-api-key': 'fly_pk_staging_public' }), { ...env, FINGERLY_PROXY_KEY: 'fly_px_staging_proxy' })
+    expect(staging.status).toBe(200)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('matches the public key to the proxy key environment', () => {
+    expect(testing.isPublicKeyFor('fly_px_production_a', 'fly_pk_production_b-C_9')).toBe(true)
+    expect(testing.isPublicKeyFor('fly_px_development_a', 'fly_pk_production_b')).toBe(false)
+    expect(testing.isPublicKeyFor('fly_px_production_a', 'fly_sk_production_b')).toBe(false)
+    expect(testing.isPublicKeyFor('fly_px_production_a', null)).toBe(false)
+    expect(testing.isPublicKeyFor('', 'fly_pk_production_b')).toBe(false)
+  })
+})
+
 describe('upstream trouble', () => {
   const visitor = { origin: 'https://shop.example', 'cf-connecting-ip': '203.0.113.9' }
 

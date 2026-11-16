@@ -64,7 +64,10 @@ does not hold one IP address), forwards allowlisted client headers
 (`x-api-key`, `content-type`, `idempotency-key`, `user-agent`, `sec-fetch-*`
 and `sec-ch-ua*`), and forwards Cloudflare edge TLS metadata from `request.cf`
 (`x-fingerly-edge-tls-version`, `x-fingerly-edge-tls-cipher` and
-`x-fingerly-edge-http-proto`) when available. Every other HTTP method answers
+`x-fingerly-edge-http-proto`) when available. A request whose `x-api-key` is
+missing or is not a `fly_pk_` public key of the proxy key's environment (a
+secret `fly_sk_` key included) answers `401` before any upstream call. Every
+other HTTP method answers
 `405` with `Allow: POST`. One 5-second deadline covers the whole upstream
 exchange. The answer is read in full, up to 4 MiB, before anything is sent
 back: a timeout answers `504`, and an unreachable upstream, a broken answer or
