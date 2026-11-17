@@ -1,6 +1,7 @@
 /**
  * The README's local testing steps: the proxy key never sits on a command line,
- * and the prompt that writes `.dev.vars` writes what wrangler reads.
+ * the prompt that writes `.dev.vars` writes what wrangler reads, and the v3
+ * contract invariants are documented.
  */
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
@@ -20,6 +21,16 @@ describe('README', () => {
       expect(line).not.toMatch(/fly_px_/)
       expect(line).not.toMatch(/FINGERLY_PROXY_KEY=(?!%s)\S/)
     }
+  })
+
+  it('documents single-path ingest, sanitize-and-restore platform gate, and that only the edge JA4 is sent from request.cf', () => {
+    expect(README).toContain('https://api.fingerly.io/api/v1/ingest')
+    expect(README).toContain('x-fingerly-sdk-platform')
+    expect(README).toContain('missing_origin')
+    expect(README).toContain('`request.cf.botManagement.ja4`')
+    expect(README).toContain('Enterprise plans with Bot Management')
+    expect(README.match(/x-fingerly-edge-[a-z0-9-]+/g)?.every((name) => name === 'x-fingerly-edge-ja4')).toBe(true)
+    expect(README).not.toMatch(/[\u2013\u2014]/)
   })
 
   it('writes .dev.vars from the prompt, readable only by its owner', () => {

@@ -7,7 +7,7 @@
   </a>
 </p>
 
-<p align="center"><b>Fingerly Cloudflare Worker Proxy</b><br>An auditable first-party proxy that serves the Fingerly browser SDK from a path on your own site, so content blockers have nothing to match.</p>
+<p align="center"><b>Fingerly Cloudflare Worker Proxy</b><br>An auditable first-party proxy that serves the Fingerly browser and native SDKs from a path on your own site, so content blockers have nothing to match.</p>
 
 <p align="center">
   <a href="https://github.com/fingerly-io/cloudflare-worker-proxy/releases"><img src="https://img.shields.io/github/v/release/fingerly-io/cloudflare-worker-proxy?style=flat-square" alt="Latest release"></a>
@@ -20,9 +20,10 @@
 
 ## What is this
 
-An auditable first-party proxy for the Fingerly browser SDK. It runs in your Cloudflare account,
-on your site's own host, at one path the Fingerly dashboard issued, and forwards only the browser
-SDK's submissions. It is not an open proxy and cannot read stored events.
+An auditable first-party proxy for the Fingerly browser and native SDKs. It runs in your
+Cloudflare account, on your site's own host, at one path the Fingerly dashboard issued, and
+forwards single-pass raw-byte ingest submissions. It is not an open proxy and cannot read stored
+events.
 [Fingerly](https://fingerly.io) is device intelligence for fraud prevention.
 
 - [Why it gets past content blockers](#why-it-gets-past-content-blockers)
@@ -83,22 +84,46 @@ If the route has to live on another host, such as `edge.example.com` serving pag
 
 ## What it will and will not do
 
-The upstream is a constant in the Worker's source, `https://api.fingerly.io/api/v1/ingest`. The
-one exception is for testing on your own machine: `FINGERLY_DEV_UPSTREAM`, such as
-`http://localhost:8080`, is honoured only when it names a loopback origin (`localhost`,
-`127.0.0.1` or `[::1]`), so a deployed Worker cannot be pointed anywhere else. A
-`FINGERLY_PROXY_KEY` that is not shaped like a proxy key makes the Worker answer `503` rather than
-forward anywhere.
+The upstream is a constant in the Worker's source,
+`https://api.fingerly.io/api/v1/ingest`. Any subpath or trailing slash under the
+issued path answers `404` marked `no-store`. The one exception for the
+upstream is testing on your own machine: `FINGERLY_DEV_UPSTREAM`, such as
+`http://localhost:8080`, is honoured only when it names a loopback origin
+(`localhost`, `127.0.0.1` or `[::1]`), so a deployed Worker cannot be pointed
+anywhere else. A `FINGERLY_PROXY_KEY` that is not shaped like a proxy key makes
+the Worker answer `503` rather than forward anywhere.
 
-The Worker strips cookies and authorization headers, sends the visitor's address from
-`CF-Connecting-IP` (and forwards nothing, answering `500`, when that header does not hold one IP
-address), answers exactly the issued path and `405` with `Allow: POST` for every other method,
-caps request bodies at 1 MiB, never follows upstream redirects, and never logs bodies or
-credentials. One 5-second deadline covers the whole upstream exchange. The answer is read in
-full, up to 4 MiB, before anything is sent back: a timeout answers `504`, and an unreachable
-upstream, a broken answer or one over the cap answers `502`, each as short plain text marked
-`no-store`. It reports itself upstream as `cloudflare-worker/0.2.0`, which is how the dashboard
-shows the version each proxy runs.
+Incoming headers follow a sanitize-and-restore sequence: the Worker captures
+`x-fingerly-sdk-platform` only when it matches the exact lowercase native SDK
+allowlist, strips every incoming `x-fingerly-*` header alongside `Cookie` and
+`Authorization`, restores the validated `x-fingerly-sdk-platform` only when it
+matched and `Origin` is absent (a request with `Origin` goes upstream with
+`x-fingerly-origin` only: one channel header, never both), and rejects with `400` (`missing_origin`, marked `no-store`) when both `Origin`
+and validated `x-fingerly-sdk-platform` are absent (never synthesizing
+`x-fingerly-origin` from the request URL or `Host`).
+
+The Worker forwards raw request body bytes untouched (capped at 1 MiB), sends
+the visitor's address from `CF-Connecting-IP` (answering `500` when that header
+does not hold one IP address), forwards allowlisted client headers
+(`x-api-key`, `content-type`, `idempotency-key`, `user-agent`, `sec-fetch-*`
+and `sec-ch-ua*`), and forwards one value from `request.cf`: the JA4 TLS
+fingerprint in `request.cf.botManagement.ja4`, sent as `x-fingerly-edge-ja4`
+only when Cloudflare provides it and it is shaped like JA4. Cloudflare provides
+JA4 only on Enterprise plans with Bot Management; on any other plan the header
+is not sent. The edge's TLS version, cipher and HTTP protocol cannot tell a
+current browser from a script, so they are not sent. Any `x-fingerly-*` header
+the client sends, `x-fingerly-edge-ja4` included, is dropped. A request whose `x-api-key` is
+missing or is not a `fly_pk_` public key of the proxy key's environment (a
+secret `fly_sk_` key included) answers `401` before any upstream call. Every
+other HTTP method answers
+`405` with `Allow: POST`. One 5-second deadline covers the whole upstream
+exchange. The answer is read in full, up to 4 MiB, before anything is sent
+back: a timeout answers `504`, and an unreachable upstream, a broken answer or
+one over the cap answers `502`, each marked `no-store`. Redirects are never
+followed: an upstream `3xx`, or any status outside `200` to `599`, answers
+`502` marked `no-store`, and its `Location` is never relayed. It reports itself
+upstream as `cloudflare-worker/0.3.0`, which is how the dashboard shows the
+version each proxy runs.
 
 Cloudflare edge processing location is controlled by your Cloudflare account and Data
 Localization configuration.
@@ -113,7 +138,8 @@ Localization configuration.
 | `204` | An `OPTIONS` preflight, with `Allow: POST, OPTIONS` |
 | `405` | Any other method than `POST`, with `Allow: POST` |
 | `503` | `FINGERLY_PROXY_KEY` is not shaped like a proxy key |
-| `401` | The request carries no `x-api-key` header |
+| `400` | `missing_origin`: the request carries neither `Origin` nor a valid `x-fingerly-sdk-platform` |
+| `401` | The request's `x-api-key` is missing or is not a `fly_pk_` public key of the proxy key's environment |
 | `500` | `CF-Connecting-IP` does not hold exactly one IPv4 or IPv6 address (logged once per isolate) |
 | `413` | The request body is over 1 MiB |
 | `504` | The upstream exchange passed the 5-second deadline |
