@@ -1,43 +1,86 @@
-# Fingerly Cloudflare Worker Proxy
+<p align="center">
+  <a href="https://fingerly.io">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/fingerly-io/.github/main/assets/logo-dark.svg">
+      <img src="https://raw.githubusercontent.com/fingerly-io/.github/main/assets/logo-light.svg" alt="Fingerly" height="44">
+    </picture>
+  </a>
+</p>
 
-An auditable first-party proxy for Fingerly browser and native SDKs. It runs in
-your Cloudflare account, on your site's own host, at one path the Fingerly
-dashboard issued, and forwards single-pass raw-byte ingest submissions. It is
-not an open proxy and cannot read stored events.
+<p align="center"><b>Fingerly Cloudflare Worker Proxy</b><br>An auditable first-party proxy that serves the Fingerly browser and native SDKs from a path on your own site, so content blockers have nothing to match.</p>
+
+<p align="center">
+  <a href="https://github.com/fingerly-io/cloudflare-worker-proxy/releases"><img src="https://img.shields.io/github/v/release/fingerly-io/cloudflare-worker-proxy?style=flat-square" alt="Latest release"></a>
+  <a href="https://github.com/fingerly-io/cloudflare-worker-proxy/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/fingerly-io/cloudflare-worker-proxy/release.yml?branch=main&style=flat-square&label=release" alt="Release workflow"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/fingerly-io/cloudflare-worker-proxy?style=flat-square" alt="License"></a>
+  <a href="https://docs.fingerly.io/docs/sdks/cloudflare-worker"><img src="https://img.shields.io/badge/docs-docs.fingerly.io-blue?style=flat-square" alt="Documentation"></a>
+</p>
+
+<p align="center"><img src="https://raw.githubusercontent.com/fingerly-io/.github/main/assets/banner.webp" alt="Fingerly" width="100%"></p>
+
+## What is this
+
+An auditable first-party proxy for the Fingerly browser and native SDKs. It runs in your
+Cloudflare account, on your site's own host, at one path the Fingerly dashboard issued, and
+forwards single-pass raw-byte ingest submissions. It is not an open proxy and cannot read stored
+events.
+[Fingerly](https://fingerly.io) is device intelligence for fraud prevention.
+
+- [Why it gets past content blockers](#why-it-gets-past-content-blockers)
+- [Getting started](#getting-started)
+- [What it will and will not do](#what-it-will-and-will-not-do)
+- [Configuration](#configuration)
+- [Testing locally](#testing-locally)
+- [Requirements](#requirements)
+- [Documentation](#documentation)
+- [Help](#help)
+- [Licence](#licence)
 
 ## Why it gets past content blockers
 
-Blockers refuse requests by URL: a third-party host, a path they know, a word
-such as `fingerprint`. Through this Worker the SDK posts to a path on your own
-site that is random, unique to you, and has nothing appended to it, so there is
-no pattern shared with any other site for a filter list to match. Nothing in the
-response names Fingerly either: the Worker relays only `content-type`,
-`x-request-id`, the rate limit headers and `retry-after`.
+Blockers refuse requests by URL: a third-party host, a path they know, a word such as
+`fingerprint`. Through this Worker the SDK posts to a path on your own site that is random, unique
+to you, and has nothing appended to it, so there is no pattern shared with any other site for a
+filter list to match. Nothing in the response names Fingerly either: the Worker relays only
+`content-type`, `x-request-id`, the rate limit headers and `retry-after`.
 
-## Deployment
+## Getting started
 
-1. In the dashboard, open **Integration > Proxy keys**, create a proxy of type
-   Cloudflare Worker and copy the key it shows once. Note the path it issued,
-   such as `/k7x2qm4a`.
-2. Copy `wrangler.toml.example` to `wrangler.toml`. Set the route to that path on
-   your site's host and `FINGERLY_PATH` to the same path.
-3. Run `pnpm wrangler secret put FINGERLY_PROXY_KEY` and paste the key.
-4. Run `pnpm run deploy`.
-5. Point the browser SDK at the path:
+1. Prerequisites: a Fingerly account and a Cloudflare account that serves your site. In the
+   dashboard, open **Integration > Proxy keys**, create a proxy of type Cloudflare Worker and copy
+   the key it shows once. Note the path it issued, such as `/k7x2qm4a`. See
+   [Proxy integrations](https://docs.fingerly.io/docs/proxy-integrations).
+2. Clone this repository, install its dependencies and copy `wrangler.toml.example` to
+   `wrangler.toml`. Set the route to that path on your site's host and `FINGERLY_PATH` to the same
+   path:
 
-```ts
-await load({
-  apiKey: 'fly_pk_production_...',
-  endpoints: '/k7x2qm4a',
-  consent: 'granted', // only once the visitor has agreed, or you have another lawful basis
-  // Optional. Omit this to keep all traffic on your own site.
-  fallbackToDefaultEndpoint: true,
-})
-```
+   ```sh
+   pnpm install
+   cp wrangler.toml.example wrangler.toml
+   ```
 
-If the route has to live on another host, such as `edge.example.com` serving
-pages on `www.example.com`, list the page origins in `FINGERLY_ALLOWED_ORIGINS`
-and use the full URL in `endpoints`.
+3. Store the key as a secret and deploy:
+
+   ```sh
+   pnpm wrangler secret put FINGERLY_PROXY_KEY   # paste the key when asked
+   pnpm run deploy
+   ```
+
+4. Point the browser SDK at the path:
+
+   ```ts
+   await load({
+     apiKey: 'fly_pk_production_...',
+     endpoints: '/k7x2qm4a',
+     consent: 'granted', // only once the visitor has agreed, or you have another lawful basis
+     // Optional. Omit this to keep all traffic on your own site.
+     fallbackToDefaultEndpoint: true,
+   })
+   ```
+
+If the route has to live on another host, such as `edge.example.com` serving pages on
+`www.example.com`, list the page origins in `FINGERLY_ALLOWED_ORIGINS` and use the full URL in
+`endpoints`.
 
 ## What it will and will not do
 
@@ -82,16 +125,51 @@ followed: an upstream `3xx`, or any status outside `200` to `599`, answers
 upstream as `cloudflare-worker/0.3.0`, which is how the dashboard shows the
 version each proxy runs.
 
-Cloudflare edge processing location is controlled by your Cloudflare account and
-Data Localization configuration.
+Cloudflare edge processing location is controlled by your Cloudflare account and Data
+Localization configuration.
+
+<details>
+<summary>Every status the Worker answers</summary>
+
+| Status | When |
+| --- | --- |
+| `404` | The request is not for exactly the issued path (no trailing slash, nothing under it, case-sensitive) |
+| `403` | The page's origin is neither the Worker's own host nor listed in `FINGERLY_ALLOWED_ORIGINS` |
+| `204` | An `OPTIONS` preflight, with `Allow: POST, OPTIONS` |
+| `405` | Any other method than `POST`, with `Allow: POST` |
+| `503` | `FINGERLY_PROXY_KEY` is not shaped like a proxy key |
+| `400` | `missing_origin`: the request carries neither `Origin` nor a valid `x-fingerly-sdk-platform` |
+| `401` | The request's `x-api-key` is missing or is not a `fly_pk_` public key of the proxy key's environment |
+| `500` | `CF-Connecting-IP` does not hold exactly one IPv4 or IPv6 address (logged once per isolate) |
+| `413` | The request body is over 1 MiB |
+| `504` | The upstream exchange passed the 5-second deadline |
+| `502` | The upstream was unreachable, answered with something broken, or answered with more than 4 MiB |
+| `499` | The visitor disconnected before the upstream answered |
+
+Anything else is the upstream's own status, relayed with the allowlisted headers only.
+
+</details>
+
+## Configuration
+
+Set in `wrangler.toml` (copied from `wrangler.toml.example`) or as secrets.
+
+| Setting | Required | What it does |
+| --- | --- | --- |
+| `FINGERLY_PROXY_KEY` | Yes | The proxy key the dashboard issued. Set it as a Worker secret with `pnpm wrangler secret put FINGERLY_PROXY_KEY` |
+| `FINGERLY_PATH` | Yes | The path the dashboard issued, such as `/k7x2qm4a`. The browser SDK posts here. Must match the route |
+| `FINGERLY_ALLOWED_ORIGINS` | No | Other origins whose pages may post here, comma-separated. Only needed when the Worker answers on a different host from the page |
+| `FINGERLY_DEV_UPSTREAM` | No | Local testing only: a loopback API to forward to. Any other value is ignored |
+
+The route is the path the dashboard issued, on your site's own host, exactly that path: the Worker
+answers nothing else.
 
 ## Testing locally
 
-Copy the configuration, set `FINGERLY_PATH` in it and drop the routes line.
-Then write `.dev.vars` (gitignored), readable only by you, from a prompt. The
-prompt does not echo: paste a development proxy key and press Enter. It never
-appears on a command line, so it stays out of your shell history and the
-process list:
+Copy the configuration, set `FINGERLY_PATH` in it and drop the routes line. Then write `.dev.vars`
+(gitignored), readable only by you, from a prompt. The prompt does not echo: paste a development
+proxy key and press Enter. It never appears on a command line, so it stays out of your shell
+history and the process list:
 
 ```sh
 cp wrangler.toml.example wrangler.toml
@@ -105,3 +183,31 @@ Then start the Worker:
 ```sh
 pnpm wrangler dev --local
 ```
+
+To run this repository's own checks:
+
+```sh
+pnpm run lint
+pnpm test
+```
+
+## Requirements
+
+- A Cloudflare account with the site's zone, and Wrangler 4 (installed by `pnpm install`).
+- Node.js and pnpm to deploy and test. CI uses Node.js 22.
+- A Fingerly proxy key of type Cloudflare Worker.
+
+## Documentation
+
+- [Cloudflare Worker proxy guide](https://docs.fingerly.io/docs/sdks/cloudflare-worker)
+- [Proxy integrations](https://docs.fingerly.io/docs/proxy-integrations)
+- [Browser SDK](https://docs.fingerly.io/docs/sdks/javascript)
+
+## Help
+
+Open an issue on this repository, or write to [support@fingerly.io](mailto:support@fingerly.io).
+Security issues: [security@fingerly.io](mailto:security@fingerly.io).
+
+## Licence
+
+Apache-2.0, see [LICENSE](LICENSE).
