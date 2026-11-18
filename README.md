@@ -72,7 +72,7 @@ filter list to match. Nothing in the response names Fingerly either: the Worker 
    await load({
      apiKey: 'fly_pk_production_...',
      endpoints: '/k7x2qm4a',
-     consent: 'granted', // only once the visitor has agreed, or you have another lawful basis
+     consent: 'granted', // only once you have consent (or know none is required)
      // Optional. Omit this to keep all traffic on your own site.
      fallbackToDefaultEndpoint: true,
    })
