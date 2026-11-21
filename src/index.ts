@@ -49,6 +49,14 @@ const FORWARDED_CLIENT_HEADERS = [
 ]
 
 /**
+ * Web Bot Auth headers an AI agent's browser signs the request with, forwarded
+ * when present and at most 4096 bytes. The API ignores a longer one, so it is
+ * dropped here rather than refused.
+ */
+const SIGNATURE_HEADERS = ['signature', 'signature-input', 'signature-agent']
+const MAX_SIGNATURE_HEADER_BYTES = 4096
+
+/**
  * The response headers relayed to the caller, and nothing else. A blocker can
  * match a response header by name, so an allowlist is what guarantees nothing
  * on the way back names Fingerly, whatever the API sends in future.
@@ -270,6 +278,11 @@ export default {
     for (const name of FORWARDED_CLIENT_HEADERS) {
       const value = request.headers.get(name)
       if (value) headers.set(name, value)
+    }
+    for (const name of SIGNATURE_HEADERS) {
+      const value = request.headers.get(name)
+      // Header values are byte strings: one character per byte.
+      if (value && value.length <= MAX_SIGNATURE_HEADER_BYTES) headers.set(name, value)
     }
 
     const signal = deadline(request.signal)
