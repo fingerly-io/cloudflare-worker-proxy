@@ -242,7 +242,7 @@ describe('worker boundary', () => {
     expect(sent.get('x-fingerly-client-ip')).toBe('203.0.113.9')
     expect(sent.get('x-fingerly-origin')).toBe('https://shop.example')
     expect(sent.get('x-fingerly-host')).toBe('shop.example')
-    expect(sent.get('x-fingerly-proxy-version')).toBe('cloudflare-worker/0.3.0')
+    expect(sent.get('x-fingerly-proxy-version')).toBe('cloudflare-worker/0.4.0')
     expect(sent.get('x-fingerly-sdk-platform')).toBeNull()
     expect(sent.get('idempotency-key')).toBe('op-1')
     expect(sent.get('sec-fetch-site')).toBe('same-origin')
@@ -289,6 +289,13 @@ const browserVisitor = {
   'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'empty',
 }
 
+/** The Web Bot Auth headers an AI agent's browser adds to its requests. */
+const signed = {
+  signature: 'sig1=:dGVzdC1zaWduYXR1cmU=:',
+  'signature-input': 'sig1=("@authority" "signature-agent");created=1735689600;keyid="k1";alg="ed25519";tag="web-bot-auth"',
+  'signature-agent': '"https://chatgpt.com"',
+}
+
 /** An upstream that answers with relayed, internal and unknown headers. */
 function stubUpstream() {
   const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response('{"request_id":"r"}', {
@@ -305,13 +312,14 @@ function stubUpstream() {
 
 describe('header allowlists', () => {
   /** Names the contract (sdks/contract/proxy.md section 3) lets a proxy send upstream. */
-  const CONTRACT_REQUEST = /^(x-api-key|content-type|idempotency-key|user-agent|sec-fetch-(site|mode|dest)|sec-ch-ua(-mobile|-platform)?|x-fingerly-[a-z-]+)$/
+  const CONTRACT_REQUEST = /^(x-api-key|content-type|idempotency-key|user-agent|sec-fetch-(site|mode|dest)|sec-ch-ua(-mobile|-platform)?|signature(-input|-agent)?|x-fingerly-[a-z-]+)$/
   const RELAYED_RESPONSE = /^(x-request-id|ratelimit-limit|ratelimit-remaining|retry-after|content-type|cache-control)$/
 
   it('forwards only the contract request headers and relays only the allowlisted response headers', async () => {
     const fetchMock = stubUpstream()
     const result = await worker.fetch(post('https://shop.example/k7x2qm4a', {
       ...browserVisitor,
+      ...signed,
       referer: 'https://shop.example/reset?token=secret-token',
       'x-custom-token': 'app-header',
       forwarded: 'for=203.0.113.9',
@@ -329,7 +337,59 @@ describe('header allowlists', () => {
     expect(sent.get('sec-fetch-site')).toBe('same-origin')
     expect(sent.get('sec-fetch-mode')).toBe('cors')
     expect(sent.get('sec-fetch-dest')).toBe('empty')
+    expect(sent.get('x-custom-token')).toBeNull()
+    expect(sent.get('signature')).toBe(signed.signature)
+    expect(sent.get('signature-input')).toBe(signed['signature-input'])
+    expect(sent.get('signature-agent')).toBe(signed['signature-agent'])
+    expect(sent.get('x-fingerly-host')).toBe('shop.example')
     expect([...result.headers.keys()].filter((name) => !RELAYED_RESPONSE.test(name))).toEqual([])
+  })
+
+  it('drops a Web Bot Auth header over 4096 bytes and still forwards the request', async () => {
+    const fetchMock = stubUpstream()
+    const atCap = `"https://${'a'.repeat(4096 - 10)}"`
+    expect(atCap).toHaveLength(4096)
+    const result = await worker.fetch(post('https://shop.example/k7x2qm4a', {
+      ...browserVisitor,
+      ...signed,
+      signature: `sig1=:${'A'.repeat(4097)}:`,
+      'signature-agent': atCap,
+    }), env)
+    expect(result.status).toBe(200)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const sent = new Headers(fetchMock.mock.calls[0]![1]?.headers)
+    expect(sent.get('signature')).toBeNull()
+    expect(sent.get('signature-input')).toBe(signed['signature-input'])
+    expect(sent.get('signature-agent')).toBe(atCap)
+    expect(result.headers.get('x-request-id')).toBe('r')
+    expect(result.headers.get('cache-control')).toBe('no-store')
+  })
+
+  it('counts a Web Bot Auth header in the UTF-8 bytes the runtime sends, not in characters', async () => {
+    const fetchMock = stubUpstream()
+    // workerd reads header bytes as UTF-8, so 4098 bytes on the wire arrive as
+    // 1366 characters; Node's Headers cannot hold such a value, so it is read here.
+    const wide = '€'.repeat(1366)
+    expect(new TextEncoder().encode(wide).byteLength).toBe(4098)
+    const request = post('https://shop.example/k7x2qm4a', { ...browserVisitor, ...signed })
+    const read = request.headers.get.bind(request.headers)
+    Object.defineProperty(request, 'headers', {
+      value: { get: (name: string) => (name.toLowerCase() === 'signature' ? wide : read(name)) },
+    })
+    const result = await worker.fetch(request, env)
+    expect(result.status).toBe(200)
+    const sent = new Headers(fetchMock.mock.calls[0]![1]?.headers)
+    expect(sent.get('signature')).toBeNull()
+    expect(sent.get('signature-input')).toBe(signed['signature-input'])
+  })
+
+  it('keeps the signature headers out of the CORS allow list', async () => {
+    const result = await worker.fetch(new Request('https://shop.example/k7x2qm4a', {
+      method: 'OPTIONS',
+      headers: { origin: 'https://app.example', 'access-control-request-method': 'POST' },
+    }), { ...env, FINGERLY_ALLOWED_ORIGINS: 'https://app.example' })
+    expect(result.status).toBe(204)
+    expect(result.headers.get('access-control-allow-headers')).toBe('content-type, x-api-key, idempotency-key, x-fingerly-sdk-platform')
   })
 })
 

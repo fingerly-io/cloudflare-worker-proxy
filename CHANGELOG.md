@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0
+
+- Forwards the Web Bot Auth headers `Signature`, `Signature-Input` and
+  `Signature-Agent` under their own names, so the API can verify an AI
+  agent's signature over `x-fingerly-host`. Each is sent only when present,
+  non-empty and at most 4096 bytes as sent; a longer one, which the API
+  ignores, is dropped and the request is still forwarded. They stay out of
+  the CORS allow list: the agent's browser adds them itself and never
+  preflights them.
+
 ## 0.3.0
 
 - Answers exactly the issued path: no trailing slash, nothing under it,

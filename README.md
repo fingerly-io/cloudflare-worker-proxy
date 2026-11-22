@@ -105,8 +105,9 @@ and validated `x-fingerly-sdk-platform` are absent (never synthesizing
 The Worker forwards raw request body bytes untouched (capped at 1 MiB), sends
 the visitor's address from `CF-Connecting-IP` (answering `500` when that header
 does not hold one IP address), forwards allowlisted client headers
-(`x-api-key`, `content-type`, `idempotency-key`, `user-agent`, `sec-fetch-*`
-and `sec-ch-ua*`), and forwards one value from `request.cf`: the JA4 TLS
+(`x-api-key`, `content-type`, `idempotency-key`, `user-agent`, `sec-fetch-*`,
+`sec-ch-ua*`, and the Web Bot Auth `signature`, `signature-input` and
+`signature-agent` when at most 4096 bytes each), and forwards one value from `request.cf`: the JA4 TLS
 fingerprint in `request.cf.botManagement.ja4`, sent as `x-fingerly-edge-ja4`
 only when Cloudflare provides it and it is shaped like JA4. Cloudflare provides
 JA4 only on Enterprise plans with Bot Management; on any other plan the header
@@ -122,7 +123,7 @@ back: a timeout answers `504`, and an unreachable upstream, a broken answer or
 one over the cap answers `502`, each marked `no-store`. Redirects are never
 followed: an upstream `3xx`, or any status outside `200` to `599`, answers
 `502` marked `no-store`, and its `Location` is never relayed. It reports itself
-upstream as `cloudflare-worker/0.3.0`, which is how the dashboard shows the
+upstream as `cloudflare-worker/0.4.0`, which is how the dashboard shows the
 version each proxy runs.
 
 Cloudflare edge processing location is controlled by your Cloudflare account and Data

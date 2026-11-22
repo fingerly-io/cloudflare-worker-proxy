@@ -18,7 +18,7 @@ export interface Env {
   FINGERLY_DEV_UPSTREAM?: string
 }
 
-const VERSION = '0.3.0'
+const VERSION = '0.4.0'
 const MAX_BODY_BYTES = 1_048_576
 /** The most of an answer relayed: an answer is a few kilobytes. */
 const MAX_RESPONSE_BYTES = 4 * 1_048_576
@@ -47,6 +47,15 @@ const FORWARDED_CLIENT_HEADERS = [
   'sec-ch-ua-mobile',
   'sec-ch-ua-platform',
 ]
+
+/**
+ * Web Bot Auth headers an AI agent's browser signs the request with, forwarded
+ * when present and at most 4096 bytes. The API ignores a longer one, so it is
+ * dropped here rather than refused.
+ */
+const SIGNATURE_HEADERS = ['signature', 'signature-input', 'signature-agent']
+const MAX_SIGNATURE_HEADER_BYTES = 4096
+const utf8 = new TextEncoder()
 
 /**
  * The response headers relayed to the caller, and nothing else. A blocker can
@@ -270,6 +279,12 @@ export default {
     for (const name of FORWARDED_CLIENT_HEADERS) {
       const value = request.headers.get(name)
       if (value) headers.set(name, value)
+    }
+    for (const name of SIGNATURE_HEADERS) {
+      const value = request.headers.get(name)
+      // The runtime reads header bytes as UTF-8 and sends the value back as
+      // UTF-8, so the cap counts those bytes, not the string's length.
+      if (value && utf8.encode(value).byteLength <= MAX_SIGNATURE_HEADER_BYTES) headers.set(name, value)
     }
 
     const signal = deadline(request.signal)
