@@ -55,6 +55,7 @@ const FORWARDED_CLIENT_HEADERS = [
  */
 const SIGNATURE_HEADERS = ['signature', 'signature-input', 'signature-agent']
 const MAX_SIGNATURE_HEADER_BYTES = 4096
+const utf8 = new TextEncoder()
 
 /**
  * The response headers relayed to the caller, and nothing else. A blocker can
@@ -281,8 +282,9 @@ export default {
     }
     for (const name of SIGNATURE_HEADERS) {
       const value = request.headers.get(name)
-      // Header values are byte strings: one character per byte.
-      if (value && value.length <= MAX_SIGNATURE_HEADER_BYTES) headers.set(name, value)
+      // The runtime reads header bytes as UTF-8 and sends the value back as
+      // UTF-8, so the cap counts those bytes, not the string's length.
+      if (value && utf8.encode(value).byteLength <= MAX_SIGNATURE_HEADER_BYTES) headers.set(name, value)
     }
 
     const signal = deadline(request.signal)

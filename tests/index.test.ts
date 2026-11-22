@@ -365,6 +365,24 @@ describe('header allowlists', () => {
     expect(result.headers.get('cache-control')).toBe('no-store')
   })
 
+  it('counts a Web Bot Auth header in the UTF-8 bytes the runtime sends, not in characters', async () => {
+    const fetchMock = stubUpstream()
+    // workerd reads header bytes as UTF-8, so 4098 bytes on the wire arrive as
+    // 1366 characters; Node's Headers cannot hold such a value, so it is read here.
+    const wide = '€'.repeat(1366)
+    expect(new TextEncoder().encode(wide).byteLength).toBe(4098)
+    const request = post('https://shop.example/k7x2qm4a', { ...browserVisitor, ...signed })
+    const read = request.headers.get.bind(request.headers)
+    Object.defineProperty(request, 'headers', {
+      value: { get: (name: string) => (name.toLowerCase() === 'signature' ? wide : read(name)) },
+    })
+    const result = await worker.fetch(request, env)
+    expect(result.status).toBe(200)
+    const sent = new Headers(fetchMock.mock.calls[0]![1]?.headers)
+    expect(sent.get('signature')).toBeNull()
+    expect(sent.get('signature-input')).toBe(signed['signature-input'])
+  })
+
   it('keeps the signature headers out of the CORS allow list', async () => {
     const result = await worker.fetch(new Request('https://shop.example/k7x2qm4a', {
       method: 'OPTIONS',
